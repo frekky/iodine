@@ -29,6 +29,7 @@ struct tun_user {
 	int active;
 	int authenticated;
 	int authenticated_raw;
+	int options_locked;
 	time_t last_pkt;
 	struct timeval dns_timeout;
 	int seed;

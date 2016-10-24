@@ -153,6 +153,7 @@ find_available_user()
 			user->active = 1;
 			user->authenticated = 0;
 			user->authenticated_raw = 0;
+			user->options_locked = 0;
 			user->last_pkt = time(NULL);
 			user->fragsize = MAX_FRAGSIZE;
 			user->conn = CONN_DNS_NULL;
