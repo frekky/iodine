@@ -1341,7 +1341,7 @@ handle_null_request(int tun_fd, int dns_fd, struct dnsfd *dns_fds, struct query 
 
 		userid = b32_8to5(in[1]);
 
-		if (check_authenticated_user_and_ip(userid, q) != 0) {
+		if (check_authenticated_user_and_ip_and_options(userid, q) != 0) {
 			write_dns(dns_fd, q, "BADIP", 5, 'T');
 			return; /* illegal id */
 		}
@@ -1387,7 +1387,7 @@ handle_null_request(int tun_fd, int dns_fd, struct dnsfd *dns_fds, struct query 
 
 		userid = b32_8to5(in[1]);
 
-		if (check_authenticated_user_and_ip(userid, q) != 0) {
+		if (check_authenticated_user_and_ip_and_options(userid, q) != 0) {
 			write_dns(dns_fd, q, "BADIP", 5, 'T');
 			return; /* illegal id */
 		}
@@ -1563,7 +1563,7 @@ handle_null_request(int tun_fd, int dns_fd, struct dnsfd *dns_fds, struct query 
 
 		/* Downstream fragsize packet */
 		userid = unpacked[0];
-		if (check_authenticated_user_and_ip(userid, q) != 0) {
+		if (check_authenticated_user_and_ip_and_options(userid, q) != 0) {
 			write_dns(dns_fd, q, "BADIP", 5, 'T');
 			return; /* illegal id */
 		}
@@ -1573,6 +1573,7 @@ handle_null_request(int tun_fd, int dns_fd, struct dnsfd *dns_fds, struct query 
 			write_dns(dns_fd, q, "BADFRAG", 7, users[userid].downenc);
 		} else {
 			users[userid].fragsize = max_frag_size;
+			users[userid].options_locked = 1;
 			users[userid].outgoing->maxfraglen = (users[userid].downenc_bits * max_frag_size) /
 				8 - DOWNSTREAM_PING_HDR;
 			write_dns(dns_fd, q, (char *) unpacked + 1, 2, users[userid].downenc);

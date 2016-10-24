@@ -159,6 +159,7 @@ find_available_user()
 			user->active = 1;
 			user->authenticated = 0;
 			user->authenticated_raw = 0;
+			user->options_locked = 0;
 			user->last_pkt = time(NULL);
 			user->fragsize = MAX_FRAGSIZE;
 			user->conn = CONN_DNS_NULL;
@@ -238,6 +239,19 @@ check_authenticated_user_and_ip(int userid, struct query *q)
 		return res;
 
 	if (!users[userid].authenticated)
+		return 1;
+
+	return 0;
+}
+
+int
+check_authenticated_user_and_ip_and_options(int userid, struct query *q)
+{
+	int res = check_authenticated_user_and_ip(userid, q);
+	if (res || check_ip)
+		return res;
+
+	if (users[userid].options_locked)
 		return 1;
 
 	return 0;

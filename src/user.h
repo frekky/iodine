@@ -29,6 +29,7 @@ struct tun_user {
 	int active;
 	int authenticated;
 	int authenticated_raw;
+	int options_locked;
 	time_t last_pkt;
 	struct timeval dns_timeout;
 	int seed;
@@ -55,6 +56,7 @@ int user_sending(int user);
 int all_users_waiting_to_send();
 int user_active(int i);
 int check_authenticated_user_and_ip(int userid, struct query *q);
+int check_authenticated_user_and_ip_and_options(int userid, struct query *q);
 int check_user_and_ip(int userid, struct query *q);
 
 int init_users(in_addr_t, int);
