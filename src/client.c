@@ -1023,7 +1023,7 @@ tunnel_dns()
 	size_t datalen, buflen;
 	uint8_t buf[64*1024], cbuf[64*1024], *data;
 	fragment f;
-	int read, compressed, ping, immediate, error;
+	int read, compressed, ping, immediate = 0, error;
 
 	memset(&q, 0, sizeof(q));
 	memset(buf, 0, sizeof(buf));
