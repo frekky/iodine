@@ -1584,6 +1584,11 @@ handle_dns_upstream_codec_switch(int dns_fd, struct query *q, int userid,
 	int codec;
 	struct encoder *enc;
 
+	if (!server.check_ip && users[userid].options_locked) {
+		write_dns(dns_fd, q, "BADIP", 5, 'T');
+		return;
+	}
+
 	codec = unpacked[0];
 
 	switch (codec) {
@@ -1621,6 +1626,11 @@ handle_dns_set_options(int dns_fd, struct query *q, int userid,
 	char *encname = "BADCODEC";
 
 	int tmp_lazy, tmp_downenc, tmp_comp;
+
+	if (!server.check_ip && users[userid].options_locked) {
+		write_dns(dns_fd, q, "BADIP", 5, 'T');
+		return;
+	}
 
 	/* Temporary variables: don't change anything until all options parsed */
 	tmp_lazy = users[userid].lazy;
@@ -1718,12 +1728,19 @@ handle_dns_set_fragsize(int dns_fd, struct query *q, int userid,
 	/* Downstream fragsize packet */
 {
 	int max_frag_size;
+
+	if (!server.check_ip && users[userid].options_locked) {
+		write_dns(dns_fd, q, "BADIP", 5, 'T');
+		return;
+	}
+
 	max_frag_size = ntohs(*(uint16_t *)unpacked);
 
 	if (max_frag_size < 2 || max_frag_size > MAX_FRAGSIZE) {
 		write_dns(dns_fd, q, "BADFRAG", 7, users[userid].downenc);
 	} else {
 		users[userid].fragsize = max_frag_size;
+		users[userid].options_locked = 1;
 		users[userid].outgoing->maxfraglen = (users[userid].downenc_bits * max_frag_size) /
 			8 - DOWNSTREAM_PING_HDR;
 		write_dns(dns_fd, q, (char *)unpacked, 2, users[userid].downenc);
