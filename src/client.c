@@ -1278,19 +1278,14 @@ client_tunnel()
 				QTRACK_DEBUG(3, "Sent a query to fill server lazy buffer to %" L "u, will send another %d",
 							 this.lazymode ? this.windowsize_down : 1, total);
 
-				if (sending > 0 || (total > 0 && this.lazymode)) {
-					/* If sending any data fragments, or server has too few
-					 * pending queries, send another one after min. interval */
-					/* TODO: enforce min send interval even if we get new data */
-					tv = ms_to_timeval(this.min_send_interval_ms);
-					if (this.min_send_interval_ms)
-						use_min_send = 1;
-					tv.tv_usec += 1;
-				} else if (total > 0 && !this.lazymode) {
-					/* In immediate mode, use normal interval when needing
-					 * to send non-data queries to probe server. */
-					tv = ms_to_timeval(this.send_interval_ms);
-				}
+				/* If sending any data fragments, or server has too few
+				 * pending queries, send another one after min. interval */
+				tv = ms_to_timeval(this.send_interval_ms);
+				if (this.send_interval_ms)
+					use_min_send = 1;
+				tv.tv_usec += 1;
+				/* In immediate mode, use normal interval when needing
+				 * to send non-data queries to probe server. */
 
 				if (sending == 0 && !use_min_send) {
 					/* check next resend time when not sending any data */
@@ -1314,7 +1309,7 @@ client_tunnel()
 				fprintf(stderr, "  num IP rejected: %4" L "u,   untracked: %4" L "u,   lazy mode: %1d\n",
 						this.num_badip, this.num_untracked, this.lazymode);
 				fprintf(stderr, " Min send: %5" L "d ms, Avg RTT: %5" L "d ms  Timeout server: %4" L "d ms\n",
-						this.min_send_interval_ms, this.rtt_total_ms / this.num_immediate, this.server_timeout_ms);
+						this.send_interval_ms, this.rtt_total_ms / this.num_immediate, this.server_timeout_ms);
 				fprintf(stderr, " Queries immediate: %5" L "u, timed out: %4" L "u    target: %4" L "d ms\n",
 						this.num_immediate, this.num_timeouts, this.max_timeout_ms);
 				if (this.conn == CONN_DNS_NULL) {
