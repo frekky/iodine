@@ -333,8 +333,8 @@ got_response(int id, int immediate, int fail)
 						if (rtt_ms > 0 && (rtt_ms < rtt_min_ms || 1 == rtt_min_ms)) {
 							rtt_min_ms = rtt_ms;
 						}
-						this.downstream_delay_variance = (double) (this.rtt_total_ms /
-							this.num_immediate) / rtt_min_ms;
+						this.downstream_delay_variance = 2.0 - (double) rtt_min_ms /
+							(double) (this.rtt_total_ms / this.num_immediate);
 					}
 					update_server_timeout(0);
 				}
