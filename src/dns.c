@@ -235,7 +235,7 @@ dns_encode_data_answer(struct dns_packet *qu, uint8_t *data, size_t datalen)
 	q->an[0].qnum = 0;
 	if (anstype == T_CNAME || anstype == T_DNAME ||
 		anstype == T_PTR || anstype == T_A6) {
-		if (DNS_NUM_LABELS(datalen) + 1 + datalen > sizeof(q->an[0].rdata)) {
+		if (DNS_NUM_LABELS(datalen) + 1 + datalen > QUERY_RDATA_SIZE) {
 			warnx("cannot encode more than QUERY_RDATA_SIZE (%d)", QUERY_RDATA_SIZE);
 			dns_packet_destroy(q);
 			return NULL;
@@ -246,10 +246,10 @@ dns_encode_data_answer(struct dns_packet *qu, uint8_t *data, size_t datalen)
 			/* A6 prefix len = 128 (no address suffix); see RFC 2874 */
 			putbyte(&p, 128);
 		}
-		q->an[0].rdlength = putname(&p, sizeof(q->an[0].rdata) - (p - q->an[0].rdata), data, datalen, 1);
+		size_t header = p - q->an[0].rdata;
+		q->an[0].rdlength = header + putname(&p, QUERY_RDATA_SIZE - header, data, datalen, 1);
 	} else if (anstype == T_MX || anstype == T_SRV) {
 		size_t rdhostlen = datalen / q->ancount + 1;
-		size_t remain = datalen;
 		uint8_t *d = data;
 		for (uint16_t ann = 0; ann < q->ancount; ann++) {
 			q->an[ann].type = anstype;
@@ -260,17 +260,17 @@ dns_encode_data_answer(struct dns_packet *qu, uint8_t *data, size_t datalen)
 			putshort(&p, 10 * (ann + 1));
 			if (anstype == T_SRV) {
 				CHECKLEN(4, ann);
-				/* SRV has extra 2 fields in RDATA; see RFC 2782 */
+				/* SRV has header 2 fields in RDATA; see RFC 2782 */
 				putshort(&p, 10); /* 16 bits weight */
 				putshort(&p, 5060); /* 16 bits port (5060 = SIP) */
 			}
 			CHECKLEN(DNS_HOSTLEN(rdhostlen), ann);
-			q->an[ann].rdlength = putname(&p, sizeof(q->an[ann].rdata) -
-					(p - q->an[ann].rdata), data, datalen, 1);
+			size_t header = p - q->an[ann].rdata;
+			q->an[ann].rdlength = header + putname(&p, QUERY_RDATA_SIZE - header, data, datalen, 1);
 		}
 	} else if (anstype == T_TXT) {
 		CHECKLEN(DNS_TXTRDLEN(datalen), 0);
-		q->an[0].rdlength = puttxtbin(&p, sizeof(q->an[0].rdata), data, datalen);
+		q->an[0].rdlength = puttxtbin(&p, QUERY_RDATA_SIZE, data, datalen);
 	} else { /* NULL or PRIVATE */
 		CHECKLEN(datalen, 0);
 		memcpy(q->an[0].rdata, data, datalen);
