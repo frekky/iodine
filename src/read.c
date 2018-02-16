@@ -82,7 +82,7 @@ readname_loop(uint8_t *packet, size_t packetlen, uint8_t **src, uint8_t *dst,
 			if (len >= length || (s - packet) >= packetlen) {
 				goto end; /* all input/output space used up */
 			}
-			if (!bin && *s == DOT_CHAR) {
+			if (!(bin || raw) && *s == DOT_CHAR) {
 				/* dot in middle of hostname: data is technically invalid but
 				 * as a solution just replace with some other character */
 				*d++ = INVALID_CHAR;

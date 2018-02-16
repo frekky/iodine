@@ -486,8 +486,9 @@ server_tunnel()
 				for (userid = 0; userid < created_users; userid++) {
 					last_action = (users[userid].last_pkt > last_action) ? users[userid].last_pkt : last_action;
 				}
-				if (difftime(time(NULL), last_action) > server.max_idle_time) {
-					fprintf(stderr, "Server idle for too long, shutting down...\n");
+				double idle_time = difftime(time(NULL), last_action);
+				if (idle_time > server.max_idle_time && last_action > 0) {
+					fprintf(stderr, "Server idle for %f.0 seconds, shutting down...\n", idle_time);
 					server.running = 0;
 				}
 			}
@@ -857,13 +858,16 @@ handle_dns_codectest(struct dns_packet *q, int userid, uint8_t *header, uint8_t 
 		if (encdatalen > 255)
 			DEBUG(1, "upstream codec test query data >255!");
 		ulr = encdatalen;
-		replylen = (dlr = b32->encode(reply + 4, &replylen, encdata, encdatalen));
+		replylen = (dlr = b32->encode(reply + 4, &replylen, encdata + 34, encdatalen - 34));
 	}
 	p = reply; /* make 4 bytes appended to CMC+HMAC */
 	putbyte(&p, flags);
 	putbyte(&p, ulr);
 	putshort(&p, dlr);
 	replylen += 4;
+
+	DEBUG(4, "codectest: qflags=%hhx, rflags=%hhx, ulq=%hhu, dlq=%hu, ulr=%hhu, dlr=%hu",
+			qflags, flags, ulq, dlq, ulr, dlr);
 
 	return write_dns(q, userid, reply, replylen, WD_CODECTEST | C_BASE32);
 }
@@ -923,7 +927,7 @@ handle_dns_connection_request(struct dns_packet *q, int userid, uint8_t *unpacke
 	if (flags & 0x01) { /* request TUN IP */
 		struct in_addr tunip;
 		tunip.s_addr = u->tun_ip;
-		DEBUG(1, "user %d requested TUN IP, giving %s", inet_ntoa(tunip));
+		DEBUG(1, "user %d requested TUN IP, giving %s", userid, inet_ntoa(tunip));
 		/* send TUN config details to client */
 		putdata(&o, (uint8_t *) &server.my_ip, 4);
 		putdata(&o, (uint8_t *) &u->tun_ip, 4);

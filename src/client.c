@@ -1286,7 +1286,7 @@ send_codectest(uint8_t *dataq, uint8_t dqlen, uint16_t drlen, int dnchk)
 	hmac_md5(hmac, this.hmac_key, 16, header, sizeof(header));
 	memcpy(hp, hmac, 12);
 
-	DEBUG(5, "codectest CMC %08x HMAC %s (12) hmacbuf %s", this.cmc_up, tohexstr(hmac, 12, 0), tohexstr(header, 26, 1));
+	DEBUG(5, "TX codectest: CMC %08x HMAC %s (12) hmacbuf %s", this.cmc_up, tohexstr(hmac, 12, 0), tohexstr(header, 26, 1));
 
 	size_t buflen = 32;
 	if (b32->encode(buf + 2, &buflen, header + 6, 20) != 32)
@@ -1629,7 +1629,7 @@ handshake_codectest(uint8_t *s, size_t slen, int dn, int tries, size_t testlen)
 			encslen = b32->encode(encs, &encslen, s, slen);
 			send_codectest(encs, encslen, testlen, 1);
 		} else {
-			send_codectest(test, testlen, 0, 0);
+			send_codectest(test, (uint8_t) testlen, 0, 0);
 		}
 
 		inlen = sizeof(in);
@@ -1645,6 +1645,9 @@ handshake_codectest(uint8_t *s, size_t slen, int dn, int tries, size_t testlen)
 		flags = *p++;
 		ulr = *p++;
 		readshort(in, &p, &drlen);
+
+		DEBUG(4, "RX codectest: flags=%hhx, ulr=%hhu, drlen=%" L "u (%hu), testlen=%" L "u",
+				flags, ulr, inlen - 4, drlen, testlen);
 
 		if (dn) { /* downstream check: datar is repeated base32 decoded dataq */
 			return codectest_validate(test, testlen, in + 4, inlen - 4);
@@ -1681,8 +1684,12 @@ handshake_codec_autodetect(int dn)
 			{ TEST_PAT128C, sizeof(TEST_PAT128C) - 1, 0, 2, C_BASE32 },
 			{ TEST_PAT128D, sizeof(TEST_PAT128D) - 1, 0, 3, C_BASE32 },
 			{ TEST_PAT128E, sizeof(TEST_PAT128E) - 1, 9, 4, C_BASE128 },
-			/* Try raw data first, test all bytes not already tested */
+
+			/* Try raw data, test all bytes */
 			{ TEST_PATRAWA, sizeof(TEST_PATRAWA) - 1, 0, 5, C_BASE32 },
+			{ TEST_PATRAWB, sizeof(TEST_PATRAWB) - 1, 0, 6, C_BASE32 },
+			{ TEST_PATRAWC, sizeof(TEST_PATRAWC) - 1, 0, 7, C_BASE32 },
+			{ TEST_PATRAWD, sizeof(TEST_PATRAWD) - 1, 10, 8, C_RAW },
 			/* Try Base64 (with plus sign) */
 			{ TEST_PAT64, sizeof(TEST_PAT64) - 1, 5, 0, C_BASE64 },
 			/* Try Base64u (with _u_nderscore) */
@@ -1696,7 +1703,7 @@ handshake_codec_autodetect(int dn)
 	   [A-Z] as first, and [A-Z0-9] as last char _per label_.
 	   Test by having '-' as last char.
 	 */
-	fprintf(stderr, "Autodetecting %s codec...\n");
+	fprintf(stderr, "Autodetecting %s codec...", dn ? "downstream" : "upstream");
 
 	int res, highest = -10000;
 	size_t highestid;
@@ -1708,8 +1715,11 @@ handshake_codec_autodetect(int dn)
 
 		if ((res = handshake_codectest((uint8_t *) cases[i].data,
 				cases[i].datalen, 0, 2, cases[i].datalen + 34)) < 0) {
-			if (!this.running)
+			if (!this.running) {
+				fprintf(stderr, " aborted!\n");
 				return C_UNSET;
+			}
+			fprintf(stderr, " using Base32\n");
 			return C_BASE32; /* DNS swaps case, msg already printed; or Ctrl-C */
 		} else if (res == 0) { /* data was changed */
 			inorder = 0;
@@ -1723,6 +1733,8 @@ handshake_codec_autodetect(int dn)
 		inorder++;
 	}
 
+	char *encname = get_encoder(cases[highestid].codec)->name;
+	fprintf(stderr, " using %s\n", encname ? encname : "raw");
 	return cases[highestid].codec;
 }
 
@@ -1811,12 +1823,11 @@ handshake_switch_options(int lazy, int compression, uint8_t dnenc, uint8_t upenc
 	uint8_t in[100];
 	size_t len;
 	int ret;
-	char *dname, *comp_status, *lazy_status;
+	char *comp_status, *lazy_status;
 
 	comp_status = compression ? "enabled" : "disabled";
 	lazy_status = lazy ? "lazy" : "immediate";
-	fprintf(stderr, "Switching server options: %s mode, downstream codec %s, compression %s...\n",
-			lazy_status, dname, comp_status);
+	fprintf(stderr, "Sending opts: %s mode, compression %s...\n", lazy_status, comp_status);
 
 	for (int i = 0; this.running && i < 5; i++) {
 		send_server_options(lazy, compression, dnenc, upenc, dnfraglen);
@@ -1909,7 +1920,7 @@ handshake_autoprobe_fragsize()
  * of selected type using given downstream encoding */
 {
 	uint8_t in[MAX_FRAGSIZE], test[256];
-	int ret, max_fragsize = 0, proposed_fragsize = 768, range = 768;
+	int ret, max_fragsize = 768, proposed_fragsize = 768, range = 768;
 
 	get_rand_bytes(test, sizeof(test));
 
@@ -1947,8 +1958,8 @@ handshake_autoprobe_fragsize()
 		fprintf(stderr, "\nstopped while autodetecting fragment size (Try setting manually with -m)");
 		return 0;
 	}
-	if (max_fragsize <= 20) {
-		/* Tried all the way down to 20 and found no good size.
+	if (max_fragsize <= 34) {
+		/* Tried all the way down to 34 and found no good size.
 		   But we _did_ do all handshake before this, so there must
 		   be some workable connection. */
 		fprintf(stderr, "\nfound no usable fragment size.\n");

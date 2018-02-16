@@ -1,7 +1,11 @@
 Detailed specification of protocol in version 00000801
 ======================================================
 
-Note: work in progress!!
+Note: The server and client implementations of iodine found alongside this
+      documentation are implemented according to this specification. It is
+      recommended to check the code in cases where the specification may be
+      unclear. Where the wording may be ambiguous feel free to submit a pull
+      request to improve it :)
 
 Changes from 00000800 to 00000801:
  - Add HMAC-MD5 (truncated to 32 bits) to all data packets
