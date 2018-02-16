@@ -1624,7 +1624,10 @@ handshake_codectest(uint8_t *s, size_t slen, int dn, int tries, size_t testlen)
 
 	for (int i = 0; this.running && i < tries; i++) {
 		if (dn) {
-			send_codectest(s, slen, testlen, 1);
+			uint8_t encs[256];
+			size_t encslen = sizeof(encs);
+			encslen = b32->encode(encs, &encslen, s, slen);
+			send_codectest(encs, encslen, testlen, 1);
 		} else {
 			send_codectest(test, testlen, 0, 0);
 		}

@@ -31,3 +31,4 @@ Makefile.in
 /.settings
 /iodine.log
 /iodined.log
+/*.sh

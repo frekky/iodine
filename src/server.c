@@ -830,7 +830,7 @@ handle_dns_codectest(struct dns_packet *q, int userid, uint8_t *header, uint8_t 
 	ulq = *p++;
 	readshort(header, &p, &dlq);
 
-	if (ulq > encdatalen - 34 || dlq > sizeof(reply)) {
+	if (dlq > sizeof(reply) - 4) {
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADOPTS));
 	}
 
@@ -844,12 +844,11 @@ handle_dns_codectest(struct dns_packet *q, int userid, uint8_t *header, uint8_t 
 
 	if (qflags & 1) { /* downstream codec test */
 		/* build downstream test data */
-		uint8_t dataqdec[255];
+		uint8_t dataqdec[512];
 		size_t declen = sizeof(dataqdec);
-		declen = b32->decode(dataqdec, &declen, encdata + 34, ulq);
-		p = encdata + 34;
+		declen = b32->decode(dataqdec, &declen, encdata + 34, encdatalen - 34);
 		for (uint16_t i = 0; i < dlq; i++) {
-			reply[4 + i] = p[i % ulq];
+			reply[4 + i] = dataqdec[i % declen];
 		}
 		replylen = (dlr = dlq);
 	} else { /* upstream codec test */
