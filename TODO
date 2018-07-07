@@ -1,12 +1,13 @@
 
-iodine - http://code.kryo.se/iodine
+iodine "classic" - http://code.kryo.se/iodine
+iodine "speedy"  - https://github.com/frekky/iodine
 
 ***********************************
 
-The TODO list is now located at
-
-http://dev.kryo.se/iodine/
-
-The list is under the "View tickets" page
-
-Feel free to add your own wishes and bug reports
+TODO list for unstable branch:
+ - Finish protocol update to 00000801.
+ - Randomly generate test cases for different encodings
+ - UDP-UDP forwarding over iodine (for example to use with OpenVPN)
+ - Fix HMAC being broken with userid/command caseswap
+ - Disable root requirement for unix systems & add build option to disable TUN
+ - Fix Windows support by removing outdated TUN/TAP, replace with only UDP-UDP

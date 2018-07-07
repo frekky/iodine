@@ -208,7 +208,7 @@ Option flags:
 1.5 Data packets and pings
 --------------------------
 
-Upstream data (len 1+(9-17)+1+data):
+Upstream data (len 1+(10-18)+data):
 	1 char ASCII hex coded user ID
 	rest encoded with chosen upstream codec (default base32):
 	1 byte flags:
@@ -223,27 +223,25 @@ Upstream data (len 1+(9-17)+1+data):
 Downstream data header (len 2+data):
 	1 byte flags:
     +76543210+
-    |P000IKFL|
+    |PI000KFL|
     +--------+
     1 byte sequence ID
-    data
+    <data>
 
-Downstream ping reply (len 11):
+Downstream ping reply header (len 9):
 	1 byte flags:
     +76543210+
-    |P000000I|
+    |PI000000|
     +--------+
     4 bytes current server upstream CMC
-    2 bytes downstream windowsize
-    2 bytes upstream windowsize
-    1 byte downstream window start sequence ID
+    1 byte upstream windowsize
+    1 byte downstream windowsize
     1 byte upstream window start sequence ID
-    
+    1 byte downstream window start sequence ID    
 
 Flags and fields:
-	U = Upstream codec check, data is to be discarded.
 	I = responded to immediately (for RTT calculation) - downstream only
-	P = ping flag: extra header present - downstream only; data field is absent
+	P = ping flag: see "Downstream ping reply header"; data field is absent
 	H = 1: 32-bit HMAC, 0: 96-bit HMAC (upstream only)
 	K = Compression enabled
 	F = First fragment flag
@@ -256,18 +254,17 @@ containing upstream and downstream window sizes and window start sequence IDs.
 The response does not need to contain data. If the server has no data to send,
 the response will always include the ping header and the ping flag will be set.
 
-Command P: Ping / control message (len=9)
-    0.......7 8
-    +--------+76543210+
-    |WWWWSSDD|00000WTR|
-    +--------+--------+
+Command P: Ping / control message (len=11)
+    +----------+76543210+
+    |CCCCWWWWSS|00000WTR|
+    +----------+--------+
+    4 bytes client downstream CMC
 	1 byte window size (upstream)
 	1 byte window size (downstream)
 	1 byte window start sequence ID (upstream)
 	1 byte window start sequence ID (downstream)
 	2 bytes server timeout in ms (net. byte order)
-	2 bytes downstream fragment ACK timeout in ms (net. byte order)
-	1 byte flags:
+	1 byte flags (00000WTR)
 		W = update window frag timeout
 		T = update server timeout
 		R = response must contain ping header (data optional)
@@ -277,8 +274,8 @@ Server replies with a (possibly empty) data packet with the ping (P) flag set.
 	If the T flag is set, the server sets the user's DNS timeout to the value
 	specified by the packet.
 
-If the bit corresponding to changing a particular value (ie. window timeout) is
-not set, the value should be random. (note: this is disabled in debug mode).
+If the bit corresponding to changing a particular value (ie. server timeout) is
+not set, the value of the field should be random.
 
 In lazy mode, unless the R flag is set, the server will hold the ping until it
 times out or more data becomes available to send.

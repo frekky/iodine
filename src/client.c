@@ -72,8 +72,8 @@ client_set_hostname_maxlen(size_t i)
 {
 	if (i <= 0xFF && i != this.hostname_maxlen) {
 		this.hostname_maxlen = i;
-		this.maxfragsize_up = get_raw_length_from_dns(this.hostname_maxlen - UPSTREAM_DATA_HDR,
-				get_encoder(this.enc_up), this.topdomain);
+		this.maxfragsize_up = get_raw_length_from_dns(this.hostname_maxlen - 1,
+				get_encoder(this.enc_up), this.topdomain) - UPSTREAM_DATA_HDR;
 		if (this.outbuf)
 			window_buffer_resize(this.outbuf, this.outbuf->length, this.maxfragsize_up);
 	}
@@ -371,13 +371,14 @@ send_packet(char cmd, const uint8_t *rawdata, const size_t rawdatalen, const int
  * Returns ID of sent query */
 {
 	size_t len = rawdatalen + hmaclen + 4 + 2;
-	uint8_t buf[512], data[len + 4], hmac[16];
+	uint8_t buf[512], data[len + 4], hmac[16], *p = data;
 
 	if (rawdata && rawdatalen) {
 		memcpy(data + 10 + hmaclen, rawdata, rawdatalen);
 	}
 
-	*(uint32_t *) (data + 6) = htonl(CMC(this.cmc_up));
+	p = data + 6;
+	putlong(&p, CMC(this.cmc_up));
 
 	buf[0] = cmd;
 	buf[1] = this.userid_char;
@@ -394,7 +395,8 @@ send_packet(char cmd, const uint8_t *rawdata, const size_t rawdatalen, const int
 		5. HMAC is calculated using the output from (4) and inserted into the HMAC
 			field in the data header. The data is then encoded (ie. base32 + dots)
 			and the query is sent. */
-		*(uint32_t *) data = htonl((uint32_t) len);
+		p = data;
+		putlong(&p, (uint32_t) len);
 		memcpy(data + 4, buf, 2);
 		memset(data + 10, 0, hmaclen);
 		hmac_md5(hmac, this.hmac_key, 16, data, len + 4);
@@ -412,35 +414,31 @@ send_ping(int ping_response, int ack, int set_timeout, int disconnect)
 {
 	this.num_pings++;
 	if (this.conn == CONN_DNS_NULL) {
-		uint8_t data[12];
+		uint8_t data[12], *p = data;
 		int id;
 
 		/* Build ping header (see doc/proto_xxxxxxxx.txt) */
-		data[0] = ack & 0xFF;
-
 		if (this.outbuf && this.inbuf) {
-			data[1] = this.outbuf->windowsize & 0xff;	/* Upstream window size */
-			data[2] = this.inbuf->windowsize & 0xff;		/* Downstream window size */
-			data[3] = this.outbuf->start_seq_id & 0xff;	/* Upstream window start */
-			data[4] = this.inbuf->start_seq_id & 0xff;	/* Downstream window start */
+			*p++ = this.outbuf->windowsize & 0xff;	/* Upstream window size */
+			*p++ = this.inbuf->windowsize & 0xff;	/* Downstream window size */
+			*p++ = this.outbuf->start_seq_id & 0xff;	/* Upstream window start */
+			*p++ = this.inbuf->start_seq_id & 0xff;	/* Downstream window start */
+		} else {
+			putlong(&p, 0); /* prevent memory leak */
 		}
 
-		*(uint16_t *) (data + 5) = htons(this.server_timeout_ms);
-		*(uint16_t *) (data + 7) = htons(this.downstream_timeout_ms);
+		putshort(&p, this.server_timeout_ms);
+		putshort(&p, this.downstream_timeout_ms);
 
-		/* update server frag/lazy timeout, ack flag, respond with ping flag */
-		data[9] = ((disconnect & 1) << 5) | ((set_timeout & 1) << 4) |
-			((set_timeout & 1) << 3) | ((ack < 0 ? 0 : 1) << 2) | (ping_response & 1);
-		data[10] = (this.rand_seed >> 8) & 0xff;
-		data[11] = (this.rand_seed >> 0) & 0xff;
-		this.rand_seed += 1;
+		/* flags byte: 00000WTR */
+		*p++ = (set_timeout ? (3 << 1) : 0) | (ping_response & 1);
 
-		DEBUG(3, " SEND PING: %srespond %d, ack %d, %s(server %ld ms, downfrag %ld ms), flags %02X, wup %u, wdn %u",
-				disconnect ? "DISCONNECT! " : "", ping_response, ack, set_timeout ? "SET " : "",
+		DEBUG(3, " SEND PING: respond %d, %s(server %ld ms, downfrag %ld ms), flags 0x%02x, wup %u, wdn %u",
+				ping_response, set_timeout ? "SET " : "",
 				this.server_timeout_ms, this.downstream_timeout_ms,
 				data[8], this.outbuf->windowsize, this.inbuf->windowsize);
 
-		id = send_packet('p', data, sizeof(data), 12);
+		id = send_packet('p', data, (p - data), 12);
 
 		/* Log query ID as being sent now */
 		query_sent_now(id);
@@ -766,35 +764,54 @@ handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int 
 static int
 parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int *ping)
 {
-	size_t headerlen = DOWNSTREAM_DATA_HDR;
 	int error;
+	uint8_t *p = data;
 
-	f->seqID = data[0];
+	if (len < DOWNSTREAM_DATA_HDR) {
+		return 0;
+	}
 
-	/* Flags */
-	f->end = data[2] & 1;
-	f->start = (data[2] >> 1) & 1;
-	f->compressed = (data[2] >> 2) & 1;
-	if (ping) *ping = (data[2] >> 4) & 1;
-	if (immediate) *immediate = (data[2] >> 5) & 1;
+	uint8_t flags = *p++;
 
-	if (ping && *ping) { /* Handle ping stuff */
-		static unsigned dn_start_seq, up_start_seq, dn_wsize, up_wsize;
+	/* Data/ping flags (PI000xxx) */
+	*ping = (flags >> 7) & 1;
+	*immediate = (flags >> 6) & 1;
 
-		headerlen = DOWNSTREAM_PING_HDR;
-		if (len < headerlen) return 0; /* invalid packet - continue */
+	if (*ping) { /* Handle ping stuff */
+		uint8_t dn_start_seq, up_start_seq;
+		uint16_t dn_wsize, up_wsize;
+		uint32_t dn_cmc;
+
+		if (len < DOWNSTREAM_PING_HDR) {
+			return 0; /* invalid packet - continue */
+		}
 
 		/* Parse data/ping header */
-		dn_wsize = data[3];
-		up_wsize = data[4];
-		dn_start_seq = data[5];
-		up_start_seq = data[6];
-		DEBUG(3, "PING pkt data=%" L "u WS: up=%u, dn=%u; Start: up=%u, dn=%u",
-					len - headerlen, up_wsize, dn_wsize, up_start_seq, dn_start_seq);
+		readlong(data, &p, dn_cmc);
+		up_wsize = *p++;
+		dn_wsize = *p++;
+		up_start_seq = *p++;
+		dn_start_seq = *p++;
+
+		// TODO do something with server CMC & windowsizes
+		DEBUG(3, "RX PING CMC: %u, WS: up=%u, dn=%u; Start: up=%u, dn=%u",
+				dn_cmc, up_wsize, dn_wsize, up_start_seq, dn_start_seq);
+	} else {
+		f->seqID = *p++;
+
+		f->end = flags & 1;
+		f->start = (flags >> 1) & 1;
+		f->compressed = (flags >> 2) & 1;
+		f->len = len - (p - data);
+		if (f->len > 0) {
+			memcpy(f->data, p, MIN(f->len, this.inbuf->maxfraglen));
+		} else {
+			/* data packets must have len > 0 */
+			return 0;
+		}
+		DEBUG(2, " RX DATA frag ID %3u, compression %d, fraglen %" L "u, s%d e%d\n",
+				f->seqID, f->compressed, f->len, f->start, f->end);
 	}
-	f->len = len - headerlen;
-	if (f->len > 0)
-		memcpy(f->data, data + headerlen, MIN(f->len, this.inbuf->maxfraglen));
 	return 1;
 }
 
@@ -970,11 +987,6 @@ tunnel_dns()
 	if (!parse_data(buf, buflen, &f, &immediate, &ping)) {
 		DEBUG(1, "failed to parse downstream data/ping packet!");
 		return;
-	}
-
-	if ((debug >= 3 && ping) || (debug >= 2 && !ping)) {
-		fprintf(stderr, " RX %s; frag ID %3u, ACK %3d, compression %d, datalen %" L "u, s%d e%d\n",
-				ping ? "PING" : "DATA", f.seqID, f.ack_other, f.compressed, f.len, f.start, f.end);
 	}
 
 	if (f.ack_other >= 0) {

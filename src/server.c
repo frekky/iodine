@@ -147,31 +147,26 @@ send_data_or_ping(int userid, struct dns_packet *q, int ping, int immediate)
 	}
 
 	/* Build downstream data/ping header (see doc/proto_xxxxxxxx.txt) for details */
-	if (!f) {
-		/* No data, send downstream ping header */
-		ping = 1;
-	}
+	if (!f || ping) { /* build downstream ping packet */
+		/* set ping flags: PI000000 */
+		*p++ = ((ping & 1) << 7) | ((immediate & 1) << 6);
 
-	/* Set packet flags */
-	*p++ = ((ping & 1) << 7) | ((immediate & 1) << 3) |
-			((f->compressed & 1) << 2) | (f->start << 1) | f->end;
-
-	if (ping) {
-		/* build downstream ping packet */
-		*p++ = out->windowsize & 0xFF;
-		*p++ = in->windowsize & 0xFF;
+		putlong(&p, u->cmc_up);
+		putshort(&p, out->windowsize & 0xFFFF);
+		putshort(&p, in->windowsize & 0xFFFF);
 		*p++ = out->start_seq_id & 0xFF;
 		*p++ = in->start_seq_id & 0xFF;
-	} else {
-		/* build downstream data packet */
+	} else { /* build downstream data packet */
+		/* Set packet flags: PI000KFL */
+		*p++ = ((immediate & 1) << 6) |
+				((f->compressed & 1) << 2) | (f->start << 1) | f->end;
 		*p++ = f->seqID & 0xFF;
-		if (f->len + 1 > sizeof(pkt)) {
+		if (f->len >= sizeof(pkt)) {
 			warnx("send_data_or_ping: fragment too large to send! (%" L "u)", f->lastsent);
 			window_tick(out);
 			return NULL;
 		}
-		memcpy(p, f->data, f->len);
-		p += f->len;
+		putdata(&p, f->data, f->len);
 	}
 
 	/* generate answer for query */
@@ -1010,31 +1005,36 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 	int respond, set_qtimeout, set_wtimeout;
 	unsigned qtimeout_ms, wtimeout_ms;
 	struct tun_user *u = &users[userid];
+	struct dns_packet *cached;
 
 	CHECK_LEN(read, UPSTREAM_PING);
 
 	/* Check if query is cached */
-	if ((q = qmem_is_cached(u->qmem, q))) {
+	if ((cached = qmem_is_cached(u->qmem, q))) {
 		// TODO write_dns from dns_packet to answer from cache
 		if (q->ancount) {
-			return q; /* answer from cache */
+			return cached; /* answer from cache if cached query has answer section */
 		} else {
 			return NULL;
 		}
 	}
 
 	/* Unpack flags/options from ping header */
-	up_winsize = unpacked[1];
-	dn_winsize = unpacked[2];
-	up_seq = unpacked[3];
-	dn_seq = unpacked[4];
+	uint8_t *p = unpacked;
+	up_winsize = *p++;
+	dn_winsize = *p++;
+	up_seq = *p++;
+	dn_seq = *p++;
 
 	/* Query timeout and window frag timeout */
-	qtimeout_ms = ntohs(*(uint16_t *) (unpacked + 5));
-	wtimeout_ms = ntohs(*(uint16_t *) (unpacked + 7));
-	respond = unpacked[9] & 1;
-	set_qtimeout = (unpacked[9] >> 3) & 1;
-	set_wtimeout = (unpacked[9] >> 4) & 1;
+	readshort(unpacked, &p, &qtimeout_ms);
+	readshort(unpacked, &p, &wtimeout_ms);
+
+	uint8_t flags = *p++;
+
+	respond = flags & 1;
+	set_qtimeout = (flags >> 1) & 1;
+	set_wtimeout = (flags >> 2) & 1;
 
 	DEBUG(3, "PING pkt user %d, down %d/%d, up %d/%d, %sqtime %u ms, "
 		  "%swtime %u ms, respond %d (flags %02X)",
@@ -1053,7 +1053,7 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 				  userid, newlazy, qtimeout_ms);
 	}
 
-	if (set_wtimeout) {
+	if (set_wtimeout && u->outgoing) {
 		/* update sending window fragment ACK timeout */
 		u->outgoing->timeout = ms_to_timeval(wtimeout_ms);
 	}
@@ -1063,10 +1063,12 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 	if (respond) {
 		/* ping handshake - set windowsizes etc, respond NOW using this query
 		 * NOTE: still added to qmem (for cache) even though responded to immediately */
-		DEBUG(2, "PING HANDSHAKE set windowsizes (old/new) up: %d/%d, dn: %d/%d",
-			  u->outgoing->windowsize, dn_winsize, u->incoming->windowsize, up_winsize);
-		u->outgoing->windowsize = dn_winsize;
-		u->incoming->windowsize = up_winsize;
+		if (u->outgoing && u->incoming) {
+			DEBUG(2, "PING HANDSHAKE set windowsizes (old/new) up: %d/%d, dn: %d/%d",
+				  u->outgoing->windowsize, dn_winsize, u->incoming->windowsize, up_winsize);
+			u->outgoing->windowsize = dn_winsize;
+			u->incoming->windowsize = up_winsize;
+		}
 		return send_data_or_ping(userid, q, 1, 1);
 	}
 
@@ -1083,7 +1085,7 @@ handle_dns_data(struct dns_packet *q, uint8_t *unpacked, size_t len, int userid)
 	struct tun_user *u = &users[userid];
 
 	/* Need 2 byte header + >=1 byte data */
-	if (len != UPSTREAM_DATA_HDR + 1) {
+	if (len < UPSTREAM_DATA_HDR + 1) {
 		DEBUG(3, "BADLEN: expected %u, got %u", len, UPSTREAM_DATA_HDR + 1);
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADLEN));
 	}
@@ -1229,7 +1231,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 		hmaclen = 4;
 		headerlen = 1;
 		pktlen = encdatalen - 1;
-		minlen = 4 + 4;
+		minlen = 10;
 	} else if (cmd == 'U') { /* upstream codec check: nonstandard header */
 		pktlen = 32;
 		minlen = 20;
