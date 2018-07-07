@@ -148,10 +148,10 @@ send_data_or_ping(int userid, struct dns_packet *q, int ping, int immediate)
 		*p++ = ((ping & 1) << 7) | ((immediate & 1) << 6);
 
 		putlong(&p, u->cmc_up);
-		putshort(&p, out->windowsize & 0xFFFF);
 		putshort(&p, in->windowsize & 0xFFFF);
-		*p++ = out->start_seq_id & 0xFF;
+		putshort(&p, out->windowsize & 0xFFFF);
 		*p++ = in->start_seq_id & 0xFF;
+		*p++ = out->start_seq_id & 0xFF;
 	} else { /* build downstream data packet */
 		/* Set packet flags: PI000KFL */
 		*p++ = ((immediate & 1) << 6) |
@@ -166,7 +166,7 @@ send_data_or_ping(int userid, struct dns_packet *q, int ping, int immediate)
 	}
 
 	/* generate answer for query */
-	ans = write_dns(q, userid, pkt, p - pkt, u->downenc | DH_HMAC32);
+	ans = write_dns(q, userid, pkt, (p - pkt), u->downenc | DH_HMAC32);
 	qmem_answered(u->qmem, ans);
 	window_tick(out);
 	return ans;
@@ -1000,6 +1000,7 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 	int dn_seq, up_seq, dn_winsize, up_winsize;
 	int respond, set_qtimeout, set_wtimeout;
 	unsigned qtimeout_ms, wtimeout_ms;
+	uint32_t client_cmc_down;
 	struct tun_user *u = &users[userid];
 	struct dns_packet *cached;
 
@@ -1017,6 +1018,7 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 
 	/* Unpack flags/options from ping header */
 	uint8_t *p = unpacked;
+	readlong(unpacked, &p, &client_cmc_down);
 	up_winsize = *p++;
 	dn_winsize = *p++;
 	up_seq = *p++;
@@ -1032,11 +1034,11 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 	set_qtimeout = (flags >> 1) & 1;
 	set_wtimeout = (flags >> 2) & 1;
 
-	DEBUG(3, "PING pkt user %d, down %d/%d, up %d/%d, %sqtime %u ms, "
+	DEBUG(3, "PING pkt user %d, client CMC %u, down %d/%d, up %d/%d, %sqtime %u ms, "
 		  "%swtime %u ms, respond %d (flags %02X)",
-				userid, dn_seq, dn_winsize, up_seq, up_winsize,
+				userid, client_cmc_down, dn_seq, dn_winsize, up_seq, up_winsize,
 				set_qtimeout ? "SET " : "", qtimeout_ms, set_wtimeout ? "SET " : "",
-				wtimeout_ms, respond, unpacked[9]);
+				wtimeout_ms, respond, flags);
 
 	if (set_qtimeout) {
 		/* update user's query timeout if timeout flag set */

@@ -153,7 +153,7 @@ extern const unsigned char raw_header[RAW_HDR_LEN];
 #define DOWNSTREAM_DATA_HDR	2
 #define DOWNSTREAM_PING_HDR	9
 #define UPSTREAM_DATA_HDR	1
-#define UPSTREAM_PING		11
+#define UPSTREAM_PING		13
 
 #define TIMEPRINT(...) \
 		struct timeval currenttime;\

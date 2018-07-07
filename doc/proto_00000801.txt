@@ -214,7 +214,7 @@ Upstream data (len 1+(10-18)+data):
 	1 byte flags:
      76543210
     +--------+
-    |0000HKFL|
+    |0000HKFS|
     +--------+
     4 bytes CMC
     4-12 bytes HMAC
@@ -223,7 +223,7 @@ Upstream data (len 1+(10-18)+data):
 Downstream data header (len 2+data):
 	1 byte flags:
     +76543210+
-    |PI000KFL|
+    |PI000KFS|
     +--------+
     1 byte sequence ID
     <data>
@@ -245,16 +245,17 @@ Flags and fields:
 	H = 1: 32-bit HMAC, 0: 96-bit HMAC (upstream only)
 	K = Compression enabled
 	F = First fragment flag
-	L = Last fragment flag
+	S = Last fragment flag
 	Up/Dn Wsize/Wstart = upstream/downstream window size/window start Seq ID 
 
 Downstream data starts with 2 byte header, followed by data, which may be
-compressed. If Ping flag is set, another 4 bytes are appended to the header,
-containing upstream and downstream window sizes and window start sequence IDs.
-The response does not need to contain data. If the server has no data to send,
-the response will always include the ping header and the ping flag will be set.
+compressed. If Ping flag is set, another 8 bytes are appended to the header,
+containing the current CMC value of the client for downstream data, and the
+upstream and downstream window sizes and window start sequence IDs.
+The response may not contain any data following the ping header. If the server
+has no data to send, it will always respond with downstream pings.
 
-Command P: Ping / control message (len=11)
+Command P: Ping / control message (len=4+13)
     +----------+76543210+
     |CCCCWWWWSS|00000WTR|
     +----------+--------+
@@ -264,6 +265,7 @@ Command P: Ping / control message (len=11)
 	1 byte window start sequence ID (upstream)
 	1 byte window start sequence ID (downstream)
 	2 bytes server timeout in ms (net. byte order)
+	2 bytes window timeout in ms (net. byte order)
 	1 byte flags (00000WTR)
 		W = update window frag timeout
 		T = update server timeout

@@ -410,8 +410,11 @@ send_ping(int ping_response, int ack, int set_timeout, int disconnect)
 {
 	this.num_pings++;
 	if (this.conn == CONN_DNS_NULL) {
-		uint8_t data[12], *p = data;
+		uint8_t data[13], *p = data;
 		int id;
+
+		/* 4 bytes client downstream CMC */
+		putlong(&p, this.cmc_down);
 
 		/* Build ping header (see doc/proto_xxxxxxxx.txt) */
 		if (this.outbuf && this.inbuf) {
@@ -434,7 +437,7 @@ send_ping(int ping_response, int ack, int set_timeout, int disconnect)
 				this.server_timeout_ms, this.downstream_timeout_ms,
 				data[8], this.outbuf->windowsize, this.inbuf->windowsize);
 
-		id = send_packet('p', data, (p - data), 12);
+		id = send_packet('p', data, sizeof(data), 12);
 
 		/* Log query ID as being sent now */
 		query_sent_now(id);
@@ -769,11 +772,11 @@ parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int *ping)
 
 	uint8_t flags = *p++;
 
-	/* Data/ping flags (PI000xxx) */
+	/* Data/ping flags (PI000[KFS|000]) */
 	*ping = (flags >> 7) & 1;
 	*immediate = (flags >> 6) & 1;
 
-	if (*ping) { /* Handle ping stuff */
+	if (*ping) { /* handle downstream ping */
 		uint8_t dn_start_seq, up_start_seq;
 		uint16_t dn_wsize, up_wsize;
 		uint32_t dn_cmc;
@@ -792,21 +795,21 @@ parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int *ping)
 		// TODO do something with server CMC & windowsizes
 		DEBUG(3, "RX PING CMC: %u, WS: up=%u, dn=%u; Start: up=%u, dn=%u",
 				dn_cmc, up_wsize, dn_wsize, up_start_seq, dn_start_seq);
-	} else {
+	} else { /* handle downstream data */
 		f->seqID = *p++;
-
-		f->end = flags & 1;
+		f->end = flags & 1; /* flags: PI000KFS */
 		f->start = (flags >> 1) & 1;
 		f->compressed = (flags >> 2) & 1;
 		f->len = len - (p - data);
+		DEBUG(2, " RX DATA frag ID %3u, compression %d, fraglen %" L "u, s%d e%d\n",
+				f->seqID, f->compressed, f->len, f->start, f->end);
 		if (f->len > 0) {
 			memcpy(f->data, p, MIN(f->len, this.inbuf->maxfraglen));
 		} else {
-			/* data packets must have len > 0 */
+			/* data packets must have len > 0, this is technically illegal */
+			DEBUG(1, "BUG! Empty downstream data from server!! flags=%02x", flags);
 			return 0;
 		}
-		DEBUG(2, " RX DATA frag ID %3u, compression %d, fraglen %" L "u, s%d e%d\n",
-				f->seqID, f->compressed, f->len, f->start, f->end);
 	}
 	return 1;
 }
