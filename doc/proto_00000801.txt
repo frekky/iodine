@@ -134,7 +134,7 @@ Command K: Request data connection (UDP forward or TUN IP) (len=19)
 		2 bytes if URI=1XX
 	0-16 bytes remote IP address: 0 bytes if URI=X00, 4 bytes if URI=110 (IPv4)
 		or 16 bytes if URI=111 (IPv6)
-Server replies:
+Server replies: (len 1 or 11)
 	BADOPTS if not accepted, no data follows
 	1 byte copy of connection mode flags
 	extra data if T flag is set:
