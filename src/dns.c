@@ -246,7 +246,6 @@ dns_encode_data_answer(struct dns_packet *qu, uint8_t *data, size_t datalen)
 		q->an[0].rdlength = header + putname(&p, QUERY_RDATA_SIZE - header, data, datalen, 1);
 	} else if (anstype == T_MX || anstype == T_SRV) {
 		size_t rdhostlen = datalen / q->ancount + 1;
-		uint8_t *d = data;
 		for (uint16_t ann = 0; ann < q->ancount; ann++) {
 			q->an[ann].type = anstype;
 			q->an[ann].qnum = 0;
@@ -310,7 +309,6 @@ int
 dns_encode(uint8_t *buf, size_t *buflen, struct dns_packet *q, int edns0)
 {
 	HEADER *header;
-	uint16_t ancount;
 	uint8_t *p;
 	size_t len;
 
@@ -584,9 +582,8 @@ dns_decode_rr(uint8_t *packet, uint8_t **dst, size_t packetlen, struct dns_rr *a
 struct dns_packet *
 dns_decode(uint8_t *packet, size_t packetlen)
 {
-	uint8_t name[QUERY_NAME_SIZE], *p;
+	uint8_t *p;
 	uint16_t class;
-	uint32_t ttl;
 	struct dns_packet *q;
 	HEADER *header = (HEADER *) packet;
 
@@ -647,6 +644,9 @@ dns_decode(uint8_t *packet, size_t packetlen)
 
 #define CHECKLEN(x) if (a->rdlength < (x) + (p-a->rdata))  return 0
 
+
+/* decodes data from dns_packet into buffer out with length *outlen.
+ * sets *outlen to size of decoded output */
 int
 dns_decode_data_answer(struct dns_packet *q, uint8_t *out, size_t *outlen)
 {
@@ -657,7 +657,7 @@ dns_decode_data_answer(struct dns_packet *q, uint8_t *out, size_t *outlen)
 	}
 
 	struct dns_rr *a = &q->an[0];
-	size_t len;
+	size_t len = 0;
 	uint16_t type = a->type;
 	uint8_t *p = a->rdata;
 	if (type == T_CNAME || type == T_PTR || type == T_A6 || type == T_DNAME) {
@@ -680,7 +680,6 @@ dns_decode_data_answer(struct dns_packet *q, uint8_t *out, size_t *outlen)
 	} else if (type == T_MX || type == T_SRV) {
 		/* Only exact 10-multiples are accepted, however answers may not be in
 		 * order since DNS servers can mess around a bit */
-		uint8_t *rdatastart;
 		uint16_t pref, lastpref = 0;
 		size_t offset = 0;
 

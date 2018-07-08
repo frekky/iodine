@@ -86,10 +86,6 @@ qmem_is_cached(struct qmem_buffer *buf, struct dns_packet *q)
  * Returns NULL if new query (ie. not cached), pointer to query if cached */
 {
 	struct dns_packet *pq;
-	char *data = "x";
-	uint8_t dataenc = C_BASE32;
-	size_t len = 1;
-	int dnscache = 0;
 
 	/* Check if this is a duplicate query */
 	for (size_t p = buf->start; p != buf->end; p = (p + 1) % buf->size) {
@@ -184,7 +180,6 @@ qmem_max_wait(struct qmem_buffer *buf, struct dns_packet **sendq, struct timeval
 {
 	struct timeval now, tmp, age;
 	struct dns_packet *q = NULL;
-	size_t timedout = 0;
 
 	if (buf->num_pending == 0) {
 		return 0;

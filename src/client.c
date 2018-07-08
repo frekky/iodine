@@ -212,7 +212,7 @@ query_sent_now(int id)
 }
 
 static void
-got_response(int id, int immediate, int fail)
+got_response(int id, int immediate)
 /* immediate: if query was replied to immediately (see below) */
 {
 	struct timeval now, rtt;
@@ -220,8 +220,7 @@ got_response(int id, int immediate, int fail)
 	static time_t rtt_min_ms = 1;
 	gettimeofday(&now, NULL);
 
-	QTRACK_DEBUG(4, "Got answer id %d (%s)%s", id, immediate ? "immediate" : "lazy",
-		fail ? ", FAIL" : "");
+	QTRACK_DEBUG(4, "Got answer id %d (%s)%s", id, immediate ? "immediate" : "lazy");
 
 	for (int i = 0; i < PENDING_QUERIES_LENGTH; i++) {
 		if (id >= 0 && this.pending_queries[i].id == id) {
@@ -627,7 +626,7 @@ raw_validate(uint8_t **packet, size_t len, uint8_t *cmd)
 	len -= RAW_HDR_LEN;
 
 	/* Verify HMAC */
-	memset(packet + RAW_HDR_HMAC, 0, RAW_HDR_HMAC_LEN);
+	memset(*packet + RAW_HDR_HMAC, 0, RAW_HDR_HMAC_LEN);
 	hmac_md5(hmac, this.hmac_key, 16, *packet, len);
 	if (memcmp(hmac, hmac_pkt, RAW_HDR_HMAC_LEN) != 0) {
 		DEBUG(3, "RX-raw: bad HMAC pkt=0x%s, actual=0x%s (%d)",
@@ -763,7 +762,6 @@ handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int 
 static int
 parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int *ping)
 {
-	int error;
 	uint8_t *p = data;
 
 	if (len < DOWNSTREAM_DATA_HDR) {
@@ -786,7 +784,7 @@ parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int *ping)
 		}
 
 		/* Parse data/ping header */
-		readlong(data, &p, dn_cmc);
+		readlong(data, &p, &dn_cmc);
 		up_wsize = *p++;
 		dn_wsize = *p++;
 		up_start_seq = *p++;
@@ -900,6 +898,9 @@ tunnel_tun()
 	return read;
 }
 
+
+#define DNS_CLEANUP got_response(q->id, 0, 0); dns_packet_destroy(q);
+
 static void
 tunnel_dns()
 {
@@ -924,9 +925,8 @@ tunnel_dns()
 		if ((q = dns_decode(buf, buflen)) == NULL)
 			return;
 
-		DEBUG(2, "RX: id %5d len=%" L "u name='%s'", q->id, format_host(q->q[0].name, q->q[0].namelen, 0));
+		DEBUG(2, "RX: id %5d len=%" L "u name='%s'", q->id, q->q[0].namelen, format_host(q->q[0].name, q->q[0].namelen, 0));
 		memcpy(&q->m, &m, sizeof(m));
-		got_response(q->id, immediate, 0); /* Mark query as received */
 
 		datalen = sizeof(buf);
 		if (!dns_decode_data_answer(q, cbuf, &datalen)) /* cbuf contains data */
@@ -939,20 +939,22 @@ tunnel_dns()
 					fprintf(stderr, "BADAUTH (%" L "d): Server rejected client authentication, or server "
 						"kicked us due to timeout. Will exit if no downstream data is received in 60 seconds.\n", this.num_badauth);
 				}
+				DNS_CLEANUP;
 				return;	/* nothing done */
 			}
 			write_dns_error(q, 0);
 			if (q->rcode == SERVFAIL) { /* Maybe SERVFAIL etc */
 				handle_data_servfail();
 			}
-			dns_packet_destroy(q);
+			DNS_CLEANUP;
 			return;	/* nothing done */
 		}
 		cmd = tolower(q->q[0].name[1]);
 
 		/* don't handle anything that's not data or ping */
 		if (cmd != 'p' && cmd != this.userid_char) {
-			dns_packet_destroy(q);
+			DEBUG(1, "Got strange data response, cmd='%c'" + cmd);
+			DNS_CLEANUP;
 			return;	/* nothing done */
 		}
 	} else { /* CONN_RAW_UDP */
@@ -983,8 +985,12 @@ tunnel_dns()
 
 	/* Decode the downstream data header and fragment-ify ready for processing */
 	f.data = buf;
-	if (!parse_data(buf, buflen, &f, &immediate, &ping)) {
+	if (parse_data(buf, buflen, &f, &immediate, &ping)) {
+		got_response(q->id, immediate, 0);
+		dns_packet_destroy(q); /* we don't need this any more */
+	} else {
 		DEBUG(1, "failed to parse downstream data/ping packet!");
+		DNS_CLEANUP;
 		return;
 	}
 
@@ -999,16 +1005,7 @@ tunnel_dns()
 		return;
 	}
 
-	/* Get next ACK if nothing already pending: if we get a new ack
-	 * then we must send it immediately. */
-	if (this.next_downstream_ack >= 0) {
-		/* If this happens something is wrong (or last frag was a re-send)
-		 * May result in ACKs being delayed. */
-		DEBUG(1, "this.next_downstream_ack NOT -1! (%d), %u resends, %u oos", this.next_downstream_ack, this.outbuf->resends, this.outbuf->oos);
-	}
-
-	/* Downstream data traffic + ack data fragment */
-	this.next_downstream_ack = f.seqID;
+	/* Downstream data traffic */
 	window_process_incoming_fragment(this.inbuf, &f);
 
 	this.num_frags_recv++;
@@ -1518,7 +1515,7 @@ handshake_raw_udp()
 			got_addr = 1;
 			break;
 		}
-		DEBUG(1, "got invalid external IP: datalen %" L "u, data[0] %hhu", in[0]);
+		DEBUG(1, "got invalid external IP: datalen %" L "u, data[0]=0x%02x", len, in[0]);
 	}
 	fprintf(stderr, "\n");
 	if (!this.running)
@@ -1591,8 +1588,6 @@ codectest_validate(uint8_t *test, size_t testlen, uint8_t *datar, size_t datarle
 	}
 
 	for (int k = 0; k < testlen; k++) {
-		uint8_t orig, newc;
-
 		if (datar[k] != test[k]) {
 			/* Definitely not reliable */
 			if (isprint(datar[k]) && isprint(test[k])) {
@@ -1807,9 +1802,9 @@ handshake_edns0_check()
    1: this.use_edns0 set correctly
 */
 {
-	uint8_t in[4096], test[100], raw[50];;
-	size_t len, testlen = sizeof(test);
-	int i, ret;
+	uint8_t test[100], raw[50];
+	size_t testlen = sizeof(test);
+	int ret;
 
 	get_rand_bytes(raw, sizeof(raw)); /* generate very "soft" test, only base32 chars */
 	testlen = b32->encode(test, &testlen, raw, sizeof(raw));
@@ -1860,7 +1855,6 @@ handshake_switch_options(int lazy, int compression, uint8_t dnenc, uint8_t upenc
 
 	fprintf(stderr, "No reply from server on options switch.\n");
 
-opt_revert:
 	comp_status = this.compression_down ? "enabled" : "disabled";
 	lazy_status = this.lazymode ? "lazy" : "immediate";
 
@@ -1884,6 +1878,7 @@ handshake_connection_request()
 		len = sizeof(in);
 		p = in;
 		if ((ret = handshake_waitdns(in, &len, 0, 'k', i + 1)) != 1) {
+			DEBUG(3, "got connreq reply, ret=%d, len=%" L "u, dderr=%d", ret, len, downstream_decode_err);
 			print_downstream_err();
 			fprintf(stderr, ".");
 			continue;
@@ -1892,36 +1887,36 @@ handshake_connection_request()
 			return 0;
 		} else if (this.use_remote_forward) {
 			/* 1 byte flags in reply means UDP forward accepted */
-			if (len >= 1)
-				DEBUG(1, "extra length connreq reply: %" L "u", len);
+			if (len != 1)
+				DEBUG(1, "BUG! weird length connreq reply: %" L "u", len);
+			fprintf(stderr, "done, UDP forward accepted.\n");
 			return 1;
-		} else if (len != 12) {
+		} else if (len != 11) {
 			/* too short reply! */
 			DEBUG(1, "reply too short! expected 11, got %" L "u", len);
 			return 0;
 		}
 
-		/* decode TUN configuration */
+		/* decode TUN IP/MTU configuration */
 		struct in_addr ip;
-		char client[13], server[13];
+		char client[20], server[20];
 		uint16_t mtu;
 		uint8_t netmask;
 		readdata(&p, (uint8_t *) &ip.s_addr, 4);
-		strncpy(server, inet_ntoa(ip), sizeof(server));
+		strncpy(server, inet_ntoa(ip), sizeof(server) - 1);
 		readdata(&p, (uint8_t *) &ip.s_addr, 4);
-		strncpy(client, inet_ntoa(ip), sizeof(client));
+		strncpy(client, inet_ntoa(ip), sizeof(client) - 1);
 		readshort(in, &p, &mtu);
 		netmask = *p++;
 
 		if (tun_setip(client, server, netmask) == 0 && tun_setmtu(mtu) == 0) {
-			fprintf(stderr, "Server tunnel IP/netmask is %s/%hhu, our IP is %s\n",
+			fprintf(stderr, "done.\nServer tunnel IP/netmask is %s/%hhu, our IP is %s\n",
 					server, netmask, client);
 			return 1;
 		} else {
 			errx(4, "Failed to set IP and MTU");
 		}
 	}
-	fprintf(stderr, "done.\n");
 	return 1;
 }
 
@@ -1930,7 +1925,7 @@ handshake_autoprobe_fragsize()
 /* probe the maximum size of data that can be iodine-DNS-encoded into a reply
  * of selected type using given downstream encoding */
 {
-	uint8_t in[MAX_FRAGSIZE], test[256];
+	uint8_t test[256];
 	int ret, max_fragsize = 768, proposed_fragsize = 768, range = 768;
 
 	get_rand_bytes(test, sizeof(test));
@@ -2016,13 +2011,11 @@ handshake_set_timeout()
 
 		len = sizeof(in);
 		if ((ret = handshake_waitdns(in, &len, 0, 'P', i + 1)) != 1) {
-			if (ret == -2 || ret == -4 || ret == 0) {
-				got_response(id, 1, 0);
-			}
+			/* error responses are not so useful for RTT calculation */
 			fprintf(stderr, "!");
 			continue;
 		}
-		got_response(id, 1, 0);
+		got_response(id, 1);
 
 		fprintf(stderr, ".");
 	}
@@ -2038,8 +2031,7 @@ client_handshake()
 /* returns 1 on success, 0 on error */
 {
 	uint8_t server_chall[16];
-	int upcodec, autoqtype = 0;
-	int r;
+	int autoqtype = 0, r;
 
 	/* qtype message printed in handshake function */
 	if (this.do_qtype == T_UNSET) {
@@ -2128,6 +2120,8 @@ client_handshake()
 	/* request connection, and then we are done */
 	if (!handshake_connection_request())
 		return 0;
+
+	DEBUG(1, "Client handshake completed!");
 
 	return 1;
 }

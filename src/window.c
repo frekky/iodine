@@ -36,7 +36,8 @@ window_buffer_init(size_t length, unsigned windowsize, unsigned maxfraglen, int 
 
 	/* Note: window buffer DOES NOT WORK with length > MAX_SEQ_ID */
 	if (length > MAX_SEQ_ID)
-		errx(1, "window_buffer_init: length (%" L "u) is greater than MAX_SEQ_ID (%d)!\n");
+		errx(1, "window_buffer_init: length (%" L "u) is greater than compiled MAX_SEQ_ID (%d)!",
+				length, MAX_SEQ_ID);
 
 	w = calloc(1, sizeof(struct frag_buffer));
 	if (!w) {
@@ -134,11 +135,9 @@ window_process_incoming_fragment(struct frag_buffer *w, fragment *f)
  */
 {
 	/* Check if packet is in window */
-	unsigned startid, endid, offset;
-	int future = 0;
+	unsigned startid, offset;
 	fragment *fd;
 	startid = w->start_seq_id;
-	endid = WRAPSEQ(startid + w->length);
 	offset = SEQ_OFFSET(startid, f->seqID);
 
 	if (f->len == 0) {
@@ -152,7 +151,7 @@ window_process_incoming_fragment(struct frag_buffer *w, fragment *f)
 	ssize_t dest = WRAP(w->chunk_start + offset);
 
 	if (offset > w->length - w->windowsize) {
-		WDEBUG("incoming frag ahead: offs %u > %u, cs %u[%" L "u], id %u[%" L "u]",
+		WDEBUG("incoming frag ahead: offs %u > %" L "u, cs %u[%" L "u], id %u[%" L "u]",
 				offset, w->length - w->windowsize, w->start_seq_id, w->chunk_start,
 				f->seqID, dest);
 		offset -= w->length - w->windowsize;
@@ -195,7 +194,7 @@ window_process_incoming_fragment(struct frag_buffer *w, fragment *f)
 int
 window_reassemble_data(struct frag_buffer *w, uint8_t *data, size_t *len, uint8_t *compression)
 {
-	size_t woffs, start;
+	size_t woffs;
 	size_t maxlen = *len;
 	size_t fraglen = 0;
 	uint8_t *dest; //, *fdata_start;
@@ -261,11 +260,11 @@ window_reassemble_data(struct frag_buffer *w, uint8_t *data, size_t *len, uint8_
 			}
 
 			WDEBUG("reassemble: id %u [%" L "u], len %" L "u, offs %" \
-					L "u, total %" L "u, maxlen %" L "u, found %" L "u/%" L "u, consecutive %" L "u",
+					L "u, total %" L "u, maxlen %" L "u, found %u/%" L "u, consecutive %u",
 					woffs, f->seqID, f->len, dest - data, *len, maxlen, found_frags, w->numitems, consecutive_frags);
 
 			if (f->end == 1) {
-				WDEBUG("Found end of chunk! (seqID %u, chunk len %" L "u, datalen %" L "u)",
+				WDEBUG("Found end of chunk! (seqID %u, chunk len %u, datalen %" L "u)",
 						f->seqID, consecutive_frags, *len);
 				end = 1;
 				break;
@@ -282,7 +281,7 @@ window_reassemble_data(struct frag_buffer *w, uint8_t *data, size_t *len, uint8_
 	if (!drop)
 		*len = fraglen;
 
-	WDEBUG("Reassembled %" L "ub from %" L "u frags; comp=%u; holes=%u",
+	WDEBUG("Reassembled %" L "ub from %u frags; comp=%u; holes=%u",
 			*len, consecutive_frags, *compression, holes);
 	/* Clear all used fragments, going backwards from last processed */
 	size_t p = woffs;

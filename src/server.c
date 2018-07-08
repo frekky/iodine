@@ -104,7 +104,6 @@ static struct dns_packet *
 send_version_response(version_ack_t ack, uint32_t payload, int userid, struct dns_packet *q)
 {
 	uint8_t out[28], *p = out;
-	size_t len = sizeof(out);
 	if (ack == VERSION_ACK) {
 		putdata(&p, (uint8_t *) "VACK", 4);
 		putlong(&p, payload);
@@ -423,7 +422,6 @@ server_tunnel()
 	fd_set read_fds, write_fds;
 	int i;
 	int userid;
-	struct query *answer_now = NULL;
 
 	while (server.running) {
 		int maxfd;
@@ -632,6 +630,7 @@ raw_decode(uint8_t *packet, size_t len, struct pkt_metadata *m, int dns_fd)
 	raw_cmd = RAW_HDR_GET_CMD(packet);
 	userid = RAW_HDR_GET_USR(packet);
 	cmc = ntohl(*(uint32_t *) (packet + RAW_HDR_CMC));
+	// TODO check CMC
 	memset(hmac_pkt, 0, sizeof(hmac_pkt));
 	memcpy(hmac_pkt, packet + RAW_HDR_HMAC, RAW_HDR_HMAC_LEN);
 
@@ -754,7 +753,7 @@ write_dns(struct dns_packet *q, int userid, uint8_t *data, size_t datalen, uint8
 
 #define CHECK_LEN_U(l, x, u) \
 	if (l != x) { \
-		DEBUG(3, "BADLEN: expected %u, got %u", x, l); \
+		DEBUG(3, "BADLEN: expected %" L "u, got %" L "u", x, l); \
 		return write_dns(q, u, NULL, 0, DH_ERR(BADLEN)); \
 	}
 
@@ -787,7 +786,7 @@ handle_dns_version(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 	if (userid < 0) {
 		/* No space for another user */
 		DEBUG(1, "dropping client from %s, server full.",
-				format_addr(&q->m.from, q->m.fromlen), version);
+				format_addr(&q->m.from, q->m.fromlen));
 		syslog(LOG_INFO, "dropped user from %s, server full",
 		format_addr(&q->m.from, q->m.fromlen));
 		return send_version_response(VERSION_FULL, created_users, 0, q);
@@ -944,7 +943,7 @@ handle_dns_connection_request(struct dns_packet *q, int userid, uint8_t *unpacke
 				readdata(&p, (uint8_t *) &addr->sin_addr, 4);
 				good = 1;
 			}
-			DEBUG(1, "User %d requested UDP forward to %s:%hu, %s.", userid,
+			DEBUG(1, "User %d requested UDP forward to %s:%hu.", userid,
 				  format_addr(&u->remoteforward_addr, u->remoteforward_addr_len),
 				  port);
 		} else if (!(flags & 0x04) && server.allow_forward_local_port) {
@@ -952,15 +951,16 @@ handle_dns_connection_request(struct dns_packet *q, int userid, uint8_t *unpacke
 			addr->sin_family = AF_INET;
 			addr->sin_port = port;
 			addr->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-			DEBUG(1, "User %d requested UDP forward to localhost:%hu, %s.", userid, port);
+			DEBUG(1, "User %d requested UDP forward to localhost:%hu.", userid, port);
 			good = 1;
 		}
 		u->remote_forward_connected = 1; /* connected */
 	}
 
 	if (good) {
-		return write_dns(q, userid, out, p - out, WD_AUTO);
+		return write_dns(q, userid, out, o - out, WD_AUTO);
 	} else {
+		DEBUG(2, "bad connection request from user %d", userid);
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADOPTS));
 	}
 }
@@ -987,7 +987,7 @@ handle_dns_set_options(struct dns_packet *q, int userid, uint8_t *data, size_t l
 	window_buffer_resize(u->outgoing, u->outgoing->length,
 			get_encoder(u->downenc)->get_raw_length(u->fragsize));
 
-	DEBUG(1, "OPTS user %d: lazy %hhd, comp_down %hhd, enc_up %hhd, enc_dn %hhd, fragsize %hu",
+	DEBUG(1, "OPTS user %d: lazy %hhd, comp_down %hhd, enc_up %s, enc_dn %s, fragsize %hu",
 		  userid, u->lazy, u->down_compression, get_encoder(u->upenc)->name,
 		  get_encoder(u->downenc)->name, dnfragsize);
 
@@ -999,7 +999,7 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 {
 	int dn_seq, up_seq, dn_winsize, up_winsize;
 	int respond, set_qtimeout, set_wtimeout;
-	unsigned qtimeout_ms, wtimeout_ms;
+	uint16_t qtimeout_ms, wtimeout_ms;
 	uint32_t client_cmc_down;
 	struct tun_user *u = &users[userid];
 	struct dns_packet *cached;
@@ -1084,7 +1084,7 @@ handle_dns_data(struct dns_packet *q, uint8_t *unpacked, size_t len, int userid)
 
 	/* Need 2 byte header + >=1 byte data */
 	if (len < UPSTREAM_DATA_HDR + 1) {
-		DEBUG(3, "BADLEN: expected %u, got %u", len, UPSTREAM_DATA_HDR + 1);
+		DEBUG(3, "BADLEN: expected %" L "u, got %u", len, UPSTREAM_DATA_HDR + 1);
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADLEN));
 	}
 	/* Check if cached */
@@ -1119,9 +1119,8 @@ static struct dns_packet *
 handle_dns_login(struct dns_packet *q, uint8_t *unpacked,
 		size_t len, int userid, uint32_t cmc)
 {
-	uint8_t flags, logindata[16], cc[16], out[16];
+	uint8_t logindata[16], cc[16], out[16];
 	char fromaddr[100];
-	struct in_addr tempip;
 
 	CHECK_LEN(len, 32);
 
@@ -1179,7 +1178,6 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 {
 	char cmd, userchar;
 	int userid = -1;
-	struct dns_packet *ans = NULL;
 	uint8_t hmac[16], hmac_pkt[16], enc = C_BASE32;
 	size_t hmaclen = 12, headerlen = 2, pktlen, minlen;
 	uint32_t cmc;
@@ -1320,7 +1318,7 @@ handle_ns_request(int dns_fd, struct dns_packet *q)
 		return;
 	}
 
-	DEBUG(2, "TX: NS reply client %s ID %5d, type %d, name %s, %d bytes",
+	DEBUG(2, "TX: NS reply client %s ID %5d, type %d, name %s, %" L "u bytes",
 			format_addr(&q->m.from, q->m.fromlen), q->id, q->q[0].type, q->q[0].name, q->q[0].namelen);
 	if (sendto(dns_fd, buf, len, 0, (struct sockaddr *) &q->m.from, q->m.fromlen) <= 0) {
 		warn("ns reply send error");
@@ -1352,7 +1350,7 @@ handle_a_request(int dns_fd, struct dns_packet *q, int fakeip)
 		return;
 	}
 
-	DEBUG(2, "TX: A reply client %s ID %5d, type %d, name %s, %d bytes",
+	DEBUG(2, "TX: A reply client %s ID %5d, type %d, name %s, %" L "u bytes",
 			format_addr(&q->m.from, q->m.fromlen), q->id, q->q[0].type, q->q[0].name, q->q[0].namelen);
 	if (sendto(dns_fd, buf, len, 0, (struct sockaddr *) &q->m.from, q->m.fromlen) <= 0) {
 		warn("a reply send error");

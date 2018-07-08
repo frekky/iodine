@@ -47,7 +47,6 @@ login_calculate(uint8_t *buf, uint8_t *passmd5,	uint8_t *chall)
 {
 	unsigned char temp[16];
 	md5_state_t ctx;
-	int i;
 
 	memcpy(temp, passmd5, 16);
 
