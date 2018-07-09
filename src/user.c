@@ -24,6 +24,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #ifdef WINDOWS32
 #include <winsock2.h>
@@ -92,33 +93,29 @@ user_reset(int userid)
 	/* reset all stats */
 	u->hostlen = 0;
 	u->active = 1;
-	u->authenticated = 0;
+	u->authenticated = 0; /* user is not authenticated yet */
 	u->authenticated_raw = 0;
-	u->use_hmac = 0;
 	u->last_pkt = time(NULL);
-	u->fragsize = MAX_FRAGSIZE;
-	u->conn = CONN_DNS_NULL;
-	u->remote_forward_connected = 0;
+	u->fragsize = MAX_FRAGSIZE_DOWN;
+	u->conn = CONN_DNS_NULL; /* always start using DNS (for login) */
 	u->remoteforward_addr_len = 0;
 	u->remote_udp_fd = -1;
 	u->remoteforward_addr.ss_family = AF_UNSPEC;
 	u->fragsize = 150; /* very safe */
 	u->conn = CONN_DNS_NULL;
-	u->tuntype = USER_CONN_NONE;
+	u->tuntype = USER_CONN_NONE; /* no connection active */
 	u->down_compression = 1;
 	u->lazy = 0;
-	u->cmc_down = rand();
-	u->upenc = C_BASE32;
+	u->cmc_down = rand(); /* CMC starts at random value each session */
+	u->upenc = C_BASE32; /* use base32 until something better is chosen */
 	u->downenc = C_BASE32;
-	u->dns_timeout.tv_sec = 1; /* 1 second default lazymode timeout */
-	u->dns_timeout.tv_usec = 0;
 	get_rand_bytes(u->server_chall, sizeof(u->server_chall));
 	window_buffer_destroy(u->outgoing); /* window buffers allocated later */
 	window_buffer_destroy(u->incoming);
 	u->outgoing = NULL;
 	u->incoming = NULL;
 	qmem_destroy(u->qmem);
-	u->qmem = qmem_init(QMEM_LEN);
+	u->qmem = NULL; /* qmem is allocated later */
 }
 
 const char*
@@ -228,13 +225,13 @@ check_user_ip(int userid, struct sockaddr_storage from, socklen_t fromlen)
 }
 
 int
-set_user_udp_fds(fd_set *fds, int conn_status)
+set_user_udp_fds(fd_set *fds)
 /* Add UDP forward FDs to fd_set for users with given connection status; returns largest FD added */
 {
 	int max_fd = 0;
 	for (int userid = 0; userid < created_users; userid ++) {
 		if (user_active(userid) && users[userid].remoteforward_addr_len > 0
-			&& users[userid].remote_forward_connected == conn_status) {
+			&& users[userid].tuntype == USER_CONN_UDPFORWARD) {
 			FD_SET(users[userid].remote_udp_fd, fds);
 			max_fd = MAX(max_fd, users[userid].remote_udp_fd);
 		}
@@ -242,3 +239,30 @@ set_user_udp_fds(fd_set *fds, int conn_status)
 	return max_fd;
 }
 
+int
+user_open_udp(int userid)
+{
+	int tcp_fd;
+	struct tun_user *u = &users[userid];
+
+	/* Open socket and connect to TCP forward host:port */
+	if ((tcp_fd = socket(u->remoteforward_addr.ss_family, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+		DEBUG(1, "Socket error: %s", strerror(errno));
+		return 0;
+	}
+	if (socket_set_blocking(tcp_fd, 0) != 0)
+		return 0;
+
+	u->remote_udp_fd = tcp_fd;
+	return 1;
+}
+
+void
+user_close_udp(int userid)
+{
+	if (users[userid].remote_udp_fd) {
+		if (close(users[userid].remote_udp_fd) != 0) {
+			DEBUG(1, "Error closing user %d socket: %s", userid, strerror(errno));
+		}
+	}
+}

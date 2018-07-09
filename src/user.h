@@ -30,24 +30,21 @@ enum user_conn_type {
 struct tun_user {
 	uint8_t server_chall[16];
 	uint8_t hmac_key[16];
-	struct timeval dns_timeout;
 	struct sockaddr_storage host;
 	struct sockaddr_storage remoteforward_addr;
 	struct frag_buffer *incoming;
 	struct frag_buffer *outgoing;
-	struct qmem_buffer *qmem; // TODO dynamic allocation
+	struct qmem_buffer *qmem;
 	size_t fragsize;
 	socklen_t hostlen;
-	socklen_t remoteforward_addr_len; /* 0 if no remote forwarding enabled */
+	socklen_t remoteforward_addr_len;
 	time_t last_pkt;
 	in_addr_t tun_ip;
 	uint32_t cmc_up;
 	uint32_t cmc_down;
 	int remote_udp_fd;
-	int remote_forward_connected; /* 0 if not connected, -1 if error or 1 if OK */
-	enum connection conn;
-	enum user_conn_type tuntype;
-	char use_hmac;
+	enum connection conn; /* using raw UDP or DNS packets */
+	enum user_conn_type tuntype; /* type of iodine tunnel connection requested, USER_CONN_NONE if disconnected */
 	char lazy;
 	char id;
 	uint8_t downenc;
@@ -70,6 +67,8 @@ int init_users(in_addr_t, int);
 const char* users_get_first_ip();
 int find_user_by_ip(uint32_t);
 int find_available_user();
-int set_user_udp_fds(fd_set *fds, int);
+int set_user_udp_fds(fd_set *fds);
+int user_open_udp(int userid);
+void user_close_udp(int userid);
 
 #endif
