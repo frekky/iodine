@@ -20,7 +20,8 @@
 /* Hard-coded sequence ID and fragment size limits
  * These should match the limitations of the protocol. */
 #define MAX_SEQ_ID 256
-#define MAX_FRAGSIZE 2048
+#define MAX_FRAGSIZE_DOWN 2048
+#define MAX_FRAGSIZE_UP	255
 #define MAX_SEQ_AHEAD (MAX_SEQ_ID / 2)
 
 /* Window function definitions. */
