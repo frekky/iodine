@@ -32,7 +32,6 @@ Changes from 00000800 to 00000801:
 	0-9	Data packet
 	A-F	Data packet
 	I	IP address
-	K	Connection request
 	L	Login
 	N				(NS.topdomain A-type reply)
 	O	Options
@@ -72,11 +71,11 @@ Client sends (length 1+8):
 	4 bytes big endian protocol version
 	4 bytes random CMC
 Server replies RAW (length 28, or 9 if bad version/full):
-	1 char 's'
+	1 char "s"
 	4 chars:
-		VACK (version ok), followed by login challenge
-		VNAK (version differs), followed by server protocol version (see note)
-		VFUL (server has no free slots), followed by max users
+		"VACK" (version ok), followed by login challenge
+		"VNAK" (version differs), followed by server protocol version (see note)
+		"VFUL" (server has no free slots), followed by max users
 	4 byte value: means new userid/server protocol version/max users
 	4 bytes random CMC
 	16 byte server login challenge
@@ -125,28 +124,6 @@ Server replies (len=5-17):
 	1 byte length of IP address (4 or 16)
 	4 bytes (IPv4) or 16 bytes (IPv6) external IP address of server
 
-Command K: Request data connection (UDP forward or TUN IP) (len=19)
-	1 byte connection mode flags:
-	    +76543210+	T flag: request TUN IP
-	    |0000URIT|	URI = UDP forward flags
-	    +--------+
-	0-2 bytes remote UDP port (network byte order): 0 bytes if URI=0XX,
-		2 bytes if URI=1XX
-	0-16 bytes remote IP address: 0 bytes if URI=X00, 4 bytes if URI=110 (IPv4)
-		or 16 bytes if URI=111 (IPv6)
-Server replies: (len 1 or 11)
-	BADOPTS if not accepted, no data follows
-	1 byte copy of connection mode flags
-	extra data if T flag is set:
-	4 bytes server IPv4 address (network byte order)
-	4 bytes client IPv4 address (network byte order)
-	2 bytes MTU (network byte order)
-	1 byte netmask bits (like CIDR)
-
-	If UDP forwarding enabled, the client will not be allocated an IP on the
-	server's TUN subnet. Instead data sent by the client will be sent as UDP
-	packets to the specified port and IP address
-
 Command U: Codec/length check (Note: irregular query/response format, see note)
 	1 byte flags
     +76543210+
@@ -179,30 +156,50 @@ Notes:
 	  name is as long as possible and DLQ indicates how much data is to be decoded
 	  by server and echoed (repeated) in DATAR.
 
-Command O: Set options (len 3)
-	1 byte flags
-    +76543210+
-    |LKUUUCCC|
-    +--------+
+Command O: Set connection options (len 4-22)
+	2 bytes flags
+    +76543210+76543210+
+    |LKUUUCCC|0000URIT|
+    +--------+--------+
     2 bytes downstream fragsize
-Server sends (len 3):
+	0-2 bytes remote UDP port (network byte order): 0 bytes if URI=0XX,
+		2 bytes if URI=1XX
+	0-16 bytes remote IP address: 0 bytes if URI=X00, 4 bytes if URI=110 (IPv4)
+		or 16 bytes if URI=111 (IPv6)
+Server replies: (len 4-15)
 	BADOPTS if options rejected. Previous situation remains.
-	1 byte flag byte sent by client if all options accepted
+	2 byte copy of flags sent by client if all options accepted
 	2 bytes accepted downstream fragsize
+	extra data if T flag is set:
+	4 bytes server IPv4 address (network byte order)
+	4 bytes client IPv4 address (network byte order)
+	2 bytes MTU (network byte order)
+	1 byte netmask bits (like CIDR)
 Option flags:
-	L:	Lazy mode enabled, server will keep a number of requests waiting until
-		data becomes available to send downstream or the requests time out.
-		The timeout value for requests is controlled by the client.
-		Applies only to data transfer; handshake is always answered immediately.
-		See section "Lazy mode operation".
+	L:		Lazy mode enabled, server will keep a number of requests waiting until
+			data becomes available to send downstream or the requests time out.
+			The timeout value for requests is controlled by the client.
+			Applies only to data transfer; handshake is always answered immediately.
+			See section "Lazy mode operation".
 	K:		Downstream data compression enabled (compressed before encoding)
 	CCC:	Downstream data codec (for all authenticated replies)
 	UUU:	Upstream codec (for all data packets)
+    U:		Request UDP forward
+    R:		If set, IP address is provided. If zero, forward to server localhost:port.
+    I:		1=IPv6, 0=IPv4
+    T:		Request TUN IP
 	See codec types in section "Query and response format".
 	Server may disregard the downstream codec options; client must always use
 	the downstream encoding type indicated in every downstream DNS packet.
 	After this downstream data length (after decoding) will be max (fragsize)
 	bytes long.
+Notes:
+	If UDP forwarding enabled, the client will not be allocated an IP on the
+	server's TUN subnet. Instead data sent by the client will be sent as UDP
+	packets to the specified port and IP address
+	Flags:
+    If no flags are set, server will close any existing connections and respond
+    with BADOPTS to any data packets as it does before a connection is requested. 
 
 --------------------------
 1.5 Data packets and pings
@@ -255,7 +252,7 @@ upstream and downstream window sizes and window start sequence IDs.
 The response may not contain any data following the ping header. If the server
 has no data to send, it will always respond with downstream pings.
 
-Command P: Ping / control message (len=4+13)
+Command P: Ping / control message (len=13)
     +----------+76543210+
     |CCCCWWWWSS|00000WTR|
     +----------+--------+
