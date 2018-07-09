@@ -63,6 +63,11 @@
 #include "client.h"
 #include "hmac_md5.h"
 
+static int parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int*);
+static int handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int timeout);
+static int send_ping(int ping_response, int ack, int timeout);
+static int handshake_switch_options();
+
 void
 client_set_hostname_maxlen(size_t i)
 {
@@ -146,7 +151,7 @@ update_server_timeout(int handshake)
 
 	if (handshake) {
 		/* Send ping handshake to set server timeout */
-		return send_ping(1, -1, 1, 0);
+		return send_ping(1, -1, 1);
 	}
 	return -1;
 }
@@ -220,7 +225,7 @@ got_response(int id, int immediate)
 	static time_t rtt_min_ms = 1;
 	gettimeofday(&now, NULL);
 
-	QTRACK_DEBUG(4, "Got answer id %d (%s)%s", id, immediate ? "immediate" : "lazy");
+	QTRACK_DEBUG(4, "Got answer id %d (%s)", id, immediate ? "immediate" : "lazy");
 
 	for (int i = 0; i < PENDING_QUERIES_LENGTH; i++) {
 		if (id >= 0 && this.pending_queries[i].id == id) {
@@ -405,7 +410,7 @@ send_packet(char cmd, const uint8_t *rawdata, const size_t rawdatalen, const int
 }
 
 static int
-send_ping(int ping_response, int ack, int set_timeout, int disconnect)
+send_ping(int ping_response, int ack, int set_timeout)
 {
 	this.num_pings++;
 	if (this.conn == CONN_DNS_NULL) {
@@ -452,7 +457,7 @@ static void
 send_next_frag()
 /* Sends next available fragment of data from the outgoing window buffer */
 {
-	static uint8_t buf[MAX_FRAGSIZE], flags;
+	static uint8_t buf[MAX_FRAGSIZE_UP], flags;
 	uint16_t id;
 	fragment *f;
 	size_t buflen, hmaclen = 4;
@@ -463,7 +468,7 @@ send_next_frag()
 		if (this.outbuf->numitems > 0) {
 			/* There is stuff to send but we're out of sync, so send a ping
 			 * to get things back in order and keep the packets flowing */
-			send_ping(1, this.next_downstream_ack, 1, 0);
+			send_ping(1, this.next_downstream_ack, 1);
 			this.next_downstream_ack = -1;
 		}
 		return; /* nothing to send */
@@ -493,16 +498,16 @@ send_next_frag()
 	hmac_md5(hmac, this.hmac_key, 16, hmacbuf, sizeof(hmacbuf));
 	memcpy(hmacbuf + 10, hmac, hmaclen); /* copy in HMAC */
 
-	/* encode data prepared in hmacbuf */
+	/* encode data prepared in hmacbuf, skiping length + userid char (5 bytes) */
 	buf[0] = this.userid_char;
 	buflen = sizeof(buf) - 1;
-	buflen = get_encoder(this.enc_up)->encode(buf, &buflen, hmacbuf + 5, sizeof(hmacbuf) - 5);
+	size_t enclen = get_encoder(this.enc_up)->encode(buf, &buflen, hmacbuf + 5, sizeof(hmacbuf) - 5);
 
 	DEBUG(3, " SEND DATA: seq %d, ack %d, len %" L "u, s%d e%d c%d flags %02X hmac=%s",
 			f->seqID, f->ack_other, f->len, f->start, f->end, f->compressed, flags,
 			tohexstr(hmac, hmaclen, 0));
 
-	id = send_query(buf, buflen + 1);
+	id = send_query(buf, enclen);
 	/* Log query ID as being sent now */
 	query_sent_now(id);
 	window_tick(this.outbuf);
@@ -595,8 +600,8 @@ handle_data_servfail()
 		/* last-ditch attempt to fix SERVFAILs - disable lazy mode */
 		immediate_mode_defaults();
 		fprintf(stderr, "Attempting to disable lazy mode due to excessive SERVFAILs\n");
-		handshake_switch_options(0, this.compression_down, this.enc_down,
-				this.enc_up, this.maxfragsize_down);
+		this.lazymode = 0;
+		handshake_switch_options();
 	}
 }
 
@@ -842,7 +847,7 @@ tunnel_stdin()
 
 	if (this.conn == CONN_DNS_NULL) {
 		/* Check if outgoing buffer can hold data */
-		if (window_buffer_available(this.outbuf) < (datalen / MAX_FRAGSIZE) + 1) {
+		if (window_buffer_available(this.outbuf) < (datalen / this.outbuf->maxfraglen) + 1) {
 			DEBUG(1, "  Outgoing buffer full (%" L "u/%" L "u), not adding data!",
 						this.outbuf->numitems, this.outbuf->length);
 			return -1;
@@ -883,7 +888,7 @@ tunnel_tun()
 	if (this.conn == CONN_DNS_NULL) {
 		/* Check if outgoing buffer can hold data */
 		if ((this.windowsize_up == 0 && this.outbuf->numitems != 0) ||
-				window_buffer_available(this.outbuf) < (read / MAX_FRAGSIZE) + 1) {
+				window_buffer_available(this.outbuf) < (read / this.outbuf->maxfraglen) + 1) {
 			DEBUG(1, "  Outgoing buffer full (%" L "u/%" L "u), not adding data!",
 						this.outbuf->numitems, this.outbuf->length);
 			return -1;
@@ -899,7 +904,7 @@ tunnel_tun()
 }
 
 
-#define DNS_CLEANUP got_response(q->id, 0, 0); dns_packet_destroy(q);
+#define DNS_CLEANUP got_response(q->id, 0); dns_packet_destroy(q);
 
 static void
 tunnel_dns()
@@ -986,7 +991,7 @@ tunnel_dns()
 	/* Decode the downstream data header and fragment-ify ready for processing */
 	f.data = buf;
 	if (parse_data(buf, buflen, &f, &immediate, &ping)) {
-		got_response(q->id, immediate, 0);
+		got_response(q->id, immediate);
 		dns_packet_destroy(q); /* we don't need this any more */
 	} else {
 		DEBUG(1, "failed to parse downstream data/ping packet!");
@@ -1107,7 +1112,7 @@ client_tunnel()
 				} else {
 					/* Send ping if we didn't send anything yet */
 					send_ping(0, this.next_downstream_ack, (this.num_pings > 20 &&
-							this.num_pings % 50 == 0), 0);
+							this.num_pings % 50 == 0));
 					this.next_downstream_ack = -1;
 				}
 
@@ -1226,9 +1231,7 @@ client_tunnel()
 			}
 			if (this.use_remote_forward && FD_ISSET(STDIN_FILENO, &fds)) {
 				if (tunnel_stdin() <= 0) {
-					fprintf(stderr, "server: closing remote TCP forward connection\n");
-					/* send ping to disconnect, don't care if it comes back */
-					send_ping(0, 0, 0, 1);
+					fprintf(stderr, "error on stdin: client stopping.\n");
 					this.running = 0;
 					break;
 				}
@@ -1321,36 +1324,30 @@ send_raw_udp_login()
 }
 
 static void
-send_server_options(int lazy, int compression, uint8_t dnenc, uint8_t upenc, uint16_t dnfraglen)
+send_server_options(uint8_t *flags)
+/* sets flags[0] and flags[1] */
 {
-	uint8_t buf[3], *p = buf;
+	uint8_t buf[20], *p = buf, *flags2;
 
-	/* flags byte: see docs/proto_xxx.txt */
-	putbyte(&p, ((lazy & 1) << 7) | ((compression & 1) << 6) |
-			((upenc & 7) << 3) | (dnenc & 7));
-	putshort(&p, dnfraglen);
+	/* standard options flags byte: see docs/proto_xxx.txt */
+	putbyte(&p, ((!!this.lazymode) << 7) | ((!!this.compression_down) << 6) |
+			((this.enc_up & 7) << 3) | (this.enc_down & 7));
+	*(flags2 = p++) = 0;
+	putshort(&p, this.maxfragsize_down);
 
-	send_packet('o', buf, sizeof(buf), 12);
-}
-
-static uint8_t
-send_connection_request()
-/* returns flag byte */
-{
-	uint8_t buf[20], *p = buf;
+	/* connection options */
 	if (this.use_remote_forward) { /* request UDP forward */
-		DEBUG(2, "Sending UDP forward request, length %" L "u, ss_family %hu",
-				p - buf, this.remote_forward_addr.ss_family);
 		struct sockaddr_in *s = (struct sockaddr_in *) &this.remote_forward_addr;
+		*flags2 |= 1 << 3;
 		if (this.remote_forward_addr.ss_family == AF_INET) {
 			/* remote address is IPv4 */
-			putbyte(&p, 0x0c); /* flags */
+			*flags2 |= (1 << 2) | (1 << 1);
 			putshort(&p, s->sin_port); /* port */
 			putdata(&p, (uint8_t *) &s->sin_addr, 4); /* ipv4 addr */
 		} else if (this.remote_forward_addr.ss_family == AF_INET6) {
 			/* remote address is IPv6 */
 			struct sockaddr_in6 *s6 = (struct sockaddr_in6 *) &this.remote_forward_addr;
-			putbyte(&p, 0x0e);
+			*flags2 |= 1 << 2;
 			putshort(&p, s6->sin6_port);
 			putdata(&p, (uint8_t *) &s6->sin6_addr, 16);
 		} else {
@@ -1358,12 +1355,14 @@ send_connection_request()
 			putbyte(&p, 0x08);
 			putshort(&p, s->sin_port);
 		}
+		DEBUG(2, "Sending UDP forward request, length %" L "u, ss_family %hu",
+				p - buf, this.remote_forward_addr.ss_family);
 	} else { /* request TUN IP */
 		DEBUG(2, "Requesting TUN IP");
-		putbyte(&p, 0x01); /* flags */
+		*flags2 |= 1;
 	}
-	send_packet('k', buf, p - buf, 12);
-	return buf[0];
+
+	send_packet('o', buf, sizeof(buf), 12);
 }
 
 static int
@@ -1824,100 +1823,82 @@ handshake_edns0_check()
 }
 
 static int
-handshake_switch_options(int lazy, int compression, uint8_t dnenc, uint8_t upenc, uint16_t dnfraglen)
+handshake_switch_options()
 {
-	uint8_t in[100];
+	uint8_t in[100], flags[2];
 	size_t len;
 	int ret;
-	char *comp_status, *lazy_status;
-
-	comp_status = compression ? "enabled" : "disabled";
-	lazy_status = lazy ? "lazy" : "immediate";
-	fprintf(stderr, "Sending opts: %s mode, compression %s...\n", lazy_status, comp_status);
+	fprintf(stderr, "Sending connection options: %s mode, compression %s, ",
+			this.lazymode ? "lazy" : "immediate", this.compression_down ? "enabled" : "disabled");
+	if (this.use_remote_forward) {
+		fprintf(stderr, "forwarding stdin to udp://%s:%hu...",
+				format_addr(&this.remote_forward_addr, this.remote_forward_addr_len),
+				((struct sockaddr_in *) &this.remote_forward_addr)->sin_port);
+	} else {
+		fprintf(stderr, "request IP on TUN interface...");
+	}
 
 	for (int i = 0; this.running && i < 5; i++) {
-		send_server_options(lazy, compression, dnenc, upenc, dnfraglen);
+		send_server_options(flags);
 
 		len = sizeof(in);
-		if ((ret = handshake_waitdns(in, &len, 0, 'O', i + 1)) == 1) {
-		/* options changed successfully */
-			this.enc_down = dnenc;
-			this.enc_up = upenc;
-			this.compression_down = compression;
-			this.lazymode = lazy;
-			return 1; /* success */
+		uint8_t *p = in, inflags[2];
+		uint16_t dnfragsize;
+		if ((ret = handshake_waitdns(in, &len, 0, 'O', i + 1)) != 1) {
+			DEBUG(2, "\ngot options reply, ret=%d, len=%" L "u, dderr=%d", ret, len, downstream_decode_err);
+			if (downstream_decode_err == (E_BADOPTS | DDERR_IS_ANS)) {
+				fprintf(stderr, "rejected by server!\n");
+				return 0;
+			} else {
+				print_downstream_err();
+			}
+			fprintf(stderr, ".");
+			continue;
 		}
 
-		fprintf(stderr, "Retrying options switch...\n");
+		readdata(&p, inflags, 2); /* check reply flags from server */
+		readshort(in, &p, &dnfragsize);
+		if (len < 4 || memcmp(flags, inflags, 2) != 0 || dnfragsize != this.maxfragsize_down) {
+			DEBUG(1, "\ninvalid reply len=%" L "u, flags: 0x%s, expected 0x%s",
+					len, tohexstr(inflags, 2, 1), tohexstr(flags, 2, 0));
+			return 0;
+		} else if (this.use_remote_forward && len == 4) {
+			/* if we don't get BADOPTS, UDP forward was accepted */
+			fprintf(stderr, "done, UDP forward accepted.\n");
+			return 1;
+		} else if (!this.use_remote_forward && len == 15) {
+			/* decode TUN IP/MTU configuration */
+			struct in_addr ip;
+			char client[20], server[20];
+			uint16_t mtu;
+			uint8_t netmask;
+			readdata(&p, (uint8_t *) &ip.s_addr, 4);
+			strncpy(server, inet_ntoa(ip), sizeof(server) - 1);
+			readdata(&p, (uint8_t *) &ip.s_addr, 4);
+			strncpy(client, inet_ntoa(ip), sizeof(client) - 1);
+			readshort(in, &p, &mtu);
+			netmask = *p++;
+			fprintf(stderr, "done.\nServer tunnel IP is %s, our IP is %s/%hhu\n",
+					server, client, netmask);
+
+			if (tun_setip(client, server, netmask) == 0 && tun_setmtu(mtu) == 0) {
+				return 1;
+			} else {
+				errx(4, "Failed to set IP and MTU");
+			}
+		} else {
+			/* invalid reply, try again */
+			DEBUG(1, "\ninvalid options reply from server! len=%" L "u", len);
+		}
+		fprintf(stderr, ".");
 	}
+
 	if (!this.running)
 		return 0;
 
 	fprintf(stderr, "No reply from server on options switch.\n");
 
-	comp_status = this.compression_down ? "enabled" : "disabled";
-	lazy_status = this.lazymode ? "lazy" : "immediate";
-
-	fprintf(stderr, "Falling back to previous configuration: downstream codec %hhu, %s mode, compression %s.\n",
-			this.enc_down, lazy_status, comp_status);
 	return 0;
-}
-
-static int
-handshake_connection_request()
-/* returns 1 on server accepting connection, 0 on failure */
-{
-	uint8_t in[100], flags, *p;
-	size_t len;
-	int ret;
-
-	fprintf(stderr, "Requesting iodine data tunnel...");
-	for (int i = 0; this.running && i < 5; i++) {
-		flags = send_connection_request();
-
-		len = sizeof(in);
-		p = in;
-		if ((ret = handshake_waitdns(in, &len, 0, 'k', i + 1)) != 1) {
-			DEBUG(3, "got connreq reply, ret=%d, len=%" L "u, dderr=%d", ret, len, downstream_decode_err);
-			print_downstream_err();
-			fprintf(stderr, ".");
-			continue;
-		} else if (len < 1 || flags != *p++) { /* Check reply flags from server */
-			DEBUG(1, "invalid reply len=%" L "u, flags: %02x, expected %02x", len, in[0], flags);
-			return 0;
-		} else if (this.use_remote_forward) {
-			/* 1 byte flags in reply means UDP forward accepted */
-			if (len != 1)
-				DEBUG(1, "BUG! weird length connreq reply: %" L "u", len);
-			fprintf(stderr, "done, UDP forward accepted.\n");
-			return 1;
-		} else if (len != 11) {
-			/* too short reply! */
-			DEBUG(1, "reply too short! expected 11, got %" L "u", len);
-			return 0;
-		}
-
-		/* decode TUN IP/MTU configuration */
-		struct in_addr ip;
-		char client[20], server[20];
-		uint16_t mtu;
-		uint8_t netmask;
-		readdata(&p, (uint8_t *) &ip.s_addr, 4);
-		strncpy(server, inet_ntoa(ip), sizeof(server) - 1);
-		readdata(&p, (uint8_t *) &ip.s_addr, 4);
-		strncpy(client, inet_ntoa(ip), sizeof(client) - 1);
-		readshort(in, &p, &mtu);
-		netmask = *p++;
-
-		if (tun_setip(client, server, netmask) == 0 && tun_setmtu(mtu) == 0) {
-			fprintf(stderr, "done.\nServer tunnel IP/netmask is %s/%hhu, our IP is %s\n",
-					server, netmask, client);
-			return 1;
-		} else {
-			errx(4, "Failed to set IP and MTU");
-		}
-	}
-	return 1;
 }
 
 static int
@@ -2005,19 +1986,29 @@ handshake_set_timeout()
 	this.num_immediate = 0;
 	this.rtt_total_ms = 0;
 
-	for (int i = 0; this.running && i < 5; i++) {
-		id = this.autodetect_server_timeout ?
-			update_server_timeout(1) : send_ping(1, -1, 1, 0);
+	/* find the RTT by sending a few pings with immediate responses */
+	for (int set = 0; this.running && set <= !!this.autodetect_server_timeout; set++) {
+		/* run once to get RTT and again to set the timeout values */
+		for (int i = 0; this.running && i < 5; i++) {
+			id = (set && this.autodetect_server_timeout) ?
+				update_server_timeout(1) : send_ping(1, -1, 0);
 
-		len = sizeof(in);
-		if ((ret = handshake_waitdns(in, &len, 0, 'P', i + 1)) != 1) {
-			/* error responses are not so useful for RTT calculation */
-			fprintf(stderr, "!");
-			continue;
+			len = sizeof(in);
+			if ((ret = handshake_waitdns(in, &len, 0, 'P', i + 1)) != 1) {
+				/* error responses are not so useful for RTT calculation */
+				fprintf(stderr, "!");
+				got_response(id, 0);
+				continue;
+			}
+			got_response(id, 1);
+
+			if (set) {
+				fprintf(stderr, "done.");
+				break;
+			} else {
+				fprintf(stderr, ".");
+			}
 		}
-		got_response(id, 1);
-
-		fprintf(stderr, ".");
 	}
 	if (!this.running)
 		return;
@@ -2095,17 +2086,16 @@ client_handshake()
 		}
 	}
 
-	/* Set server-side options (up/down codec, compression, fraglen) */
-	if (!handshake_switch_options(this.lazymode, this.compression_down,
-			this.enc_down, this.enc_up, this.maxfragsize_down)) {
+	/* Set server-side options (up/down codec, compression, fraglen) and request desired connection. */
+	if (!handshake_switch_options()) {
 		return -1;
 	}
 
 	/* init windowing protocol */
-	this.outbuf = window_buffer_init(64, (0 == this.windowsize_up ? 1 : this.windowsize_up), this.maxfragsize_up, WINDOW_SENDING);
+	this.outbuf = window_buffer_init(WINDOW_BUFFER_LENGTH, (0 == this.windowsize_up ? 1 : this.windowsize_up), this.maxfragsize_up, WINDOW_SENDING);
 	this.outbuf->timeout = ms_to_timeval(this.downstream_timeout_ms);
 	/* Incoming buffer max fragsize doesn't matter */
-	this.inbuf = window_buffer_init(64, this.windowsize_down, MAX_FRAGSIZE, WINDOW_RECVING);
+	this.inbuf = window_buffer_init(WINDOW_BUFFER_LENGTH, this.windowsize_down, MAX_FRAGSIZE_DOWN, WINDOW_RECVING);
 
 	/* init query tracking */
 	this.num_untracked = 0;
@@ -2116,10 +2106,6 @@ client_handshake()
 
 	/* set server window/timeout parameters and calculate RTT */
 	handshake_set_timeout();
-
-	/* request connection, and then we are done */
-	if (!handshake_connection_request())
-		return 0;
 
 	DEBUG(1, "Client handshake completed!");
 

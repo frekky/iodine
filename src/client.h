@@ -92,6 +92,7 @@ struct client_instance {
 
 	/* Remote UDP forwarding stuff (for -R) */
 	struct sockaddr_storage remote_forward_addr;
+	socklen_t remote_forward_addr_len;
 	int use_remote_forward; /* 0 if no forwarding used */
 
 	int tun_fd;		/* file descriptor of tunnel interface */
@@ -169,10 +170,5 @@ void client_set_hostname_maxlen(size_t i);
 
 int client_handshake();
 int client_tunnel();
-
-static int parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int*);
-static int handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int timeout);
-static int handshake_switch_options(int lazy, int compression, uint8_t dnenc, uint8_t upenc, uint16_t dnfraglen);
-static int send_ping(int ping_response, int ack, int timeout, int);
 
 #endif
