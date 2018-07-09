@@ -296,7 +296,7 @@ print_downstream_err()
 			s = "bad login (is password correct?)";
 			break;
 		case E_BADOPTS:
-			s = "bad server options (try setting manually)";
+			s = "bad server options or server did not accept forwarding";
 			break;
 		}
 	}

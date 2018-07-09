@@ -98,7 +98,7 @@ static struct client_instance preset_default = {
 	.downstream_timeout_ms = 2000,
 	.autodetect_server_timeout = 1,
 	.autodetect_frag_size = 1,
-	.maxfragsize_down = MAX_FRAGSIZE,
+	.maxfragsize_down = MAX_FRAGSIZE_DOWN,
 	.compression_up = 1,
 	.compression_down = 1,
 	.windowsize_up = 8,
@@ -120,7 +120,7 @@ static struct client_instance preset_original = {
 	.hostname_maxlen = 0xFF,
 	.downstream_timeout_ms = 4000,
 	.autodetect_frag_size = 1,
-	.maxfragsize_down = MAX_FRAGSIZE,
+	.maxfragsize_down = MAX_FRAGSIZE_DOWN,
 	.compression_down = 1,
 	.compression_up = 0,
 	.do_qtype = T_UNSET,
@@ -312,7 +312,7 @@ parse_tcp_forward_option(char *optstr)
 
 	if (strrchr(optstr, ':')) {
 		remote_port_str = strrchr(optstr, ':') + 1;
-		if (optstr[0] == '[') {
+		if (optstr[0] == '[') { // TODO this is not actually how IPv6 addresses work!!
 			/* IPv6 address enclosed in square brackets */
 			remote_host_str = optstr + 1;
 			/* replace closing bracket with null terminator */
@@ -320,6 +320,7 @@ parse_tcp_forward_option(char *optstr)
 			this.remote_forward_addr.ss_family = AF_INET6;
 			retval = inet_pton(AF_INET6, remote_host_str,
 							   &((struct sockaddr_in6 *) &this.remote_forward_addr)->sin6_addr);
+			this.remote_forward_addr_len = sizeof(struct sockaddr_in6);
 		} else {
 			remote_host_str = optstr;
 			/* replace separator with null terminator */
@@ -327,11 +328,13 @@ parse_tcp_forward_option(char *optstr)
 			this.remote_forward_addr.ss_family = AF_INET;
 			retval = inet_aton(remote_host_str,
 							   &((struct sockaddr_in *) &this.remote_forward_addr)->sin_addr);
+			this.remote_forward_addr_len = sizeof(struct sockaddr_in);
 		}
 	} else {
 		/* no address specified (use server localhost IPv4), optstr is port */
 		remote_port_str = optstr;
 		this.remote_forward_addr.ss_family = AF_UNSPEC;
+		this.remote_forward_addr_len = 0;
 		retval = 1;
 	}
 
@@ -668,8 +671,8 @@ main(int argc, char **argv)
 		usage();
 	}
 
-	if (this.maxfragsize_down < 10 || this.maxfragsize_down > MAX_FRAGSIZE) {
-		warnx("Use a max frag size between 10 and %d bytes.", MAX_FRAGSIZE);
+	if (this.maxfragsize_down < 10 || this.maxfragsize_down > MAX_FRAGSIZE_DOWN) {
+		warnx("Use a max frag size between 10 and %d bytes.", MAX_FRAGSIZE_DOWN);
 		usage();
 		/* NOTREACHED */
 	}

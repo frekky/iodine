@@ -71,6 +71,8 @@ extern const unsigned char raw_header[RAW_HDR_LEN];
 #define E_BADOPTS	0x2
 #define E_BADLOGIN	0x3
 
+#define WINDOW_BUFFER_LENGTH	64
+
 #ifdef WINDOWS32
 #include "windows.h"
 #else
@@ -149,11 +151,9 @@ extern const unsigned char raw_header[RAW_HDR_LEN];
 #define GITREVISION "GIT"
 #endif
 
-#define DOWNSTREAM_HDR_R	17
 #define DOWNSTREAM_DATA_HDR	2
 #define DOWNSTREAM_PING_HDR	9
 #define UPSTREAM_DATA_HDR	1
-#define UPSTREAM_PING		13
 
 #define TIMEPRINT(...) \
 		struct timeval currenttime;\
