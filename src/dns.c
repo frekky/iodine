@@ -51,6 +51,9 @@ dns_packet_destroy(struct dns_packet *p)
 		return;
 	if (p->refcount > 1) {
 		p->refcount--;
+		return;
+	} else {
+		p->refcount = 0;
 	}
 	free(p->q);
 	free(p->an);
