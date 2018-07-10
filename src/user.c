@@ -130,7 +130,8 @@ int
 find_user_by_ip(uint32_t ip)
 {
 	for (int i = 0; i < usercount; i++) {
-		if (user_active(i) && users[i].authenticated && ip == users[i].tun_ip) {
+		if (user_active(i) && users[i].authenticated && users[i].tuntype == USER_CONN_TUNIP
+				&& ip == users[i].tun_ip) {
 			return i;
 		}
 	}

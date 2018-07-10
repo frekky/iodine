@@ -339,8 +339,10 @@ tunnel_tun()
 	/* find target ip in packet, in is padded with 4 bytes TUN header */
 	header = (struct ip*) (in + 4);
 	userid = find_user_by_ip(header->ip_dst.s_addr);
-	if (userid < 0)
+	if (userid < 0) {
+		DEBUG(2, "IN: rejecting %d byte pkt from tun", read);
 		return 0;
+	}
 
 	DEBUG(3, "IN: %d byte pkt from tun to user %d; compression %d",
 				read, userid, users[userid].down_compression);
@@ -993,7 +995,10 @@ handle_dns_set_options(struct dns_packet *q, int userid, uint8_t *data, size_t l
 		}
 
 		if (newtuntype == USER_CONN_UDPFORWARD) {
-			/* open UDP connection as requested */
+			/* open UDP connection as requested, close any existing connection first */
+			if (u->tuntype == USER_CONN_UDPFORWARD) {
+				user_close_udp(userid);
+			}
 			if (!user_open_udp(userid)) {
 				return write_dns(q, userid, NULL, 0, DH_ERR(BADOPTS));
 			}
@@ -1001,7 +1006,7 @@ handle_dns_set_options(struct dns_packet *q, int userid, uint8_t *data, size_t l
 		u->tuntype = newtuntype;
 		return write_dns(q, userid, out, o - out, WD_AUTO);
 	} else {
-		DEBUG(2, "bad connection request from user %d, len=%" L "u", userid, len);
+		DEBUG(2, "bad connection options from user %d, len=%" L "u", userid, len);
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADOPTS));
 	}
 

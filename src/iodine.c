@@ -777,15 +777,13 @@ main(int argc, char **argv)
 	fprintf(stderr, "\n");
 
 	if (this.remote_forward_addr.ss_family != AF_UNSPEC)
-		fprintf(stderr, "Requesting TCP data forwarding from server to %s:%d\n",
-				format_addr(&this.remote_forward_addr, sizeof(struct sockaddr_storage)), remote_forward_port);
+		fprintf(stderr, "Requesting data forwarding from server to udp://%s:%d\n",
+				format_addr(&this.remote_forward_addr, this.remote_forward_addr_len), remote_forward_port);
 
-	if (client_handshake()) {
+	if (!client_handshake()) {
 		retval = 1;
 		goto cleanup;
 	}
-
-	// TODO request data connection here.
 
 	fprintf(stderr, "Connection setup complete, transmitting data.\n");
 
