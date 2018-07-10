@@ -1097,42 +1097,46 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 }
 
 static struct dns_packet *
-handle_dns_data(struct dns_packet *q, int userid, uint8_t *unpacked, size_t len)
+handle_dns_data(struct dns_packet *q, int userid, uint8_t *data, size_t len)
 {
 	fragment f;
 	struct dns_packet *ans;
 	struct tun_user *u = &users[userid];
+	uint8_t *p = data, flags, hmaclen;
 
 	/* Need 2 byte header + >=1 byte data */
 	if (len < UPSTREAM_DATA_HDR + 1) {
-		DEBUG(3, "BADLEN: expected %" L "u, got %u", len, UPSTREAM_DATA_HDR + 1);
+		DEBUG(3, "BADLEN: expected upstream data pkt >2 bytes, got %" L "u bytes", len);
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADLEN));
 	}
+
 	/* Check if cached */
 	if ((ans = qmem_is_cached(u->qmem, q))) {
 		return ans;
+	} else {
+		qmem_append(u->qmem, q);
 	}
 
-	qmem_append(u->qmem, q);
 	/* Decode upstream data header - see docs/proto_XXXXXXXX.txt */
-	f.seqID = unpacked[0];
-	unpacked[2] >>= 4; /* Lower 4 bits are unused */
-	f.ack_other = ((unpacked[2] >> 3) & 1) ? unpacked[1] : -1;
-	f.compressed = (unpacked[2] >> 2) & 1;
-	f.start = (unpacked[2] >> 1) & 1;
-	f.end = unpacked[2] & 1;
-	f.len = len - UPSTREAM_DATA_HDR;
-	f.data = unpacked + UPSTREAM_DATA_HDR;
+	flags = *p++;
+	f.seqID = *p++;
+	f.compressed = (flags >> 2) & 1;
+	f.start = (flags >> 1) & 1;
+	f.end = flags & 1;
 
-	DEBUG(3, "frag seq %3u, datalen %5lu, ACK %3d, compression %1d, s%1d e%1d",
-				f.seqID, f.len, f.ack_other, f.compressed, f.start, f.end);
+	/* skip HMAC and CMC */
+	hmaclen = ((flags >> 3) & 1) ? 4 : 12;
+	p += 4 + hmaclen;
+
+	f.len = len - (p - data);
+	f.data = p;
+
+	DEBUG(3, "frag seq %3u, datalen %5lu, compression %1d, s%1d e%1d",
+				f.seqID, f.len, f.compressed, f.start, f.end);
 
 	window_process_incoming_fragment(u->incoming, &f);
 
 	user_process_incoming_data(userid);
-
-	/* Nothing to do. ACK for this fragment is sent later in qmem_max_wait,
-	 * using an old query. This is left in qmem until needed/times out */
 	return NULL;
 }
 
@@ -1245,7 +1249,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 	if (cmd == 'd') {
 		/* now we know userid exists, we can set encoder */
 		enc = users[userid].upenc;
-		hmaclen = 4;
+		hmaclen = 4; // XXX the data packet header actually tells us if it has 4 or 12 byte HMAC, this may be incorrect!
 		headerlen = 1;
 		pktlen = encdatalen - 1;
 		minlen = 10;
@@ -1316,7 +1320,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 			return write_dns(q, userid, NULL, 0, DH_ERR(BADOPTS));
 		}
 
-		return handle_dns_data(q, userid, cmd_data, cmd_len);
+		return handle_dns_data(q, userid, unpacked, raw_len);
 	case 'P':
 		return handle_dns_ping(q, userid, cmd_data, cmd_len);
 	case 'O':
