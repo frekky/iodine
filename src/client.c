@@ -1327,27 +1327,27 @@ static void
 send_server_options(uint8_t *flags)
 /* sets flags[0] and flags[1] */
 {
-	uint8_t buf[20], *p = buf, *flags2;
+	uint8_t buf[30], *p = buf + 2;
 
 	/* standard options flags byte: see docs/proto_xxx.txt */
-	putbyte(&p, ((!!this.lazymode) << 7) | ((!!this.compression_down) << 6) |
-			((this.enc_up & 7) << 3) | (this.enc_down & 7));
-	*(flags2 = p++) = 0;
+	buf[0] = ((!!this.lazymode) << 7) | ((!!this.compression_down) << 6) |
+			((this.enc_up & 7) << 3) | (this.enc_down & 7);
+	buf[1] = 0;
 	putshort(&p, this.maxfragsize_down);
 
 	/* connection options */
 	if (this.use_remote_forward) { /* request UDP forward */
 		struct sockaddr_in *s = (struct sockaddr_in *) &this.remote_forward_addr;
-		*flags2 |= 1 << 3;
+		buf[1] |= 1 << 3;
 		if (this.remote_forward_addr.ss_family == AF_INET) {
 			/* remote address is IPv4 */
-			*flags2 |= (1 << 2) | (1 << 1);
+			buf[1] |= (1 << 2) | (1 << 1);
 			putshort(&p, s->sin_port); /* port */
 			putdata(&p, (uint8_t *) &s->sin_addr, 4); /* ipv4 addr */
 		} else if (this.remote_forward_addr.ss_family == AF_INET6) {
 			/* remote address is IPv6 */
 			struct sockaddr_in6 *s6 = (struct sockaddr_in6 *) &this.remote_forward_addr;
-			*flags2 |= 1 << 2;
+			buf[1] |= 1 << 2;
 			putshort(&p, s6->sin6_port);
 			putdata(&p, (uint8_t *) &s6->sin6_addr, 16);
 		} else {
@@ -1359,10 +1359,12 @@ send_server_options(uint8_t *flags)
 				p - buf, this.remote_forward_addr.ss_family);
 	} else { /* request TUN IP */
 		DEBUG(2, "Requesting TUN IP");
-		*flags2 |= 1;
+		buf[1] |= 1;
 	}
 
-	send_packet('o', buf, sizeof(buf), 12);
+	memcpy(flags, buf, 2); /* make a copy of resulting flags */
+
+	send_packet('o', buf, (p - buf), 12);
 }
 
 static int
