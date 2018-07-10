@@ -149,7 +149,7 @@ int window_reassemble_data(struct frag_buffer *w, uint8_t *data, size_t *maxlen,
 size_t window_sending(struct frag_buffer *w, struct timeval *);
 
 /* Returns next fragment to be sent or NULL if nothing (SEND) */
-fragment *window_get_next_sending_fragment(struct frag_buffer *w, int *other_ack);
+fragment *window_get_next_sending_fragment(struct frag_buffer *w);
 
 /* Sets the fragment with seqid to be ACK'd (SEND) */
 void window_ack(struct frag_buffer *w, int seqid);

@@ -352,13 +352,10 @@ window_sending(struct frag_buffer *w, struct timeval *nextresend)
 /* Returns next fragment to be sent or NULL if nothing (SEND)
  * This also handles packet resends, timeouts etc. */
 fragment *
-window_get_next_sending_fragment(struct frag_buffer *w, int *other_ack)
+window_get_next_sending_fragment(struct frag_buffer *w)
 {
 	struct timeval age, now;
 	fragment *f = NULL;
-
-	if (*other_ack >= MAX_SEQ_ID || *other_ack < 0)
-		*other_ack = -1;
 
 	gettimeofday(&now, NULL);
 
@@ -389,7 +386,7 @@ window_get_next_sending_fragment(struct frag_buffer *w, int *other_ack)
 	/* store other ACK into fragment for sending; ignore any previous values.
 	   Don't resend ACKs because by the time we do, the other end will have
 	   resent the corresponding fragment so may as well not cause trouble. */
-	f->ack_other = *other_ack, *other_ack = -1;
+	f->ack_other = -1;
 	f->start &= 1;
 	f->end &= 1;
 	f->retries++;

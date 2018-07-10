@@ -160,7 +160,7 @@ send_data_or_ping(int userid, struct dns_packet *q, int immediate)
 	struct dns_packet *ans;
 
 	/* check if we have data, if not, send a ping instead */
-	if (!(f = window_get_next_sending_fragment(u->outgoing, NULL))) {
+	if (!(f = window_get_next_sending_fragment(u->outgoing))) {
 		return send_ping(userid, q, immediate);
 	}
 

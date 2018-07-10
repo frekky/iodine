@@ -80,7 +80,6 @@ struct client_instance this;
 #define PRESET_STATIC_VALUES \
 	.conn = CONN_DNS_NULL, \
 	.maxfragsize_up = 100, \
-	.next_downstream_ack = -1, \
 	.num_immediate = 1, \
 	.rtt_total_ms = 200, \
 	.downstream_delay_variance = 2.0, \

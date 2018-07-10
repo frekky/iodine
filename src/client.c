@@ -65,7 +65,7 @@
 
 static int parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int*);
 static int handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int timeout);
-static int send_ping(int ping_response, int ack, int timeout);
+static int send_ping(int ping_response, int timeout);
 static int handshake_switch_options();
 
 void
@@ -151,7 +151,7 @@ update_server_timeout(int handshake)
 
 	if (handshake) {
 		/* Send ping handshake to set server timeout */
-		return send_ping(1, -1, 1);
+		return send_ping(1, 1);
 	}
 	return -1;
 }
@@ -410,7 +410,7 @@ send_packet(char cmd, const uint8_t *rawdata, const size_t rawdatalen, const int
 }
 
 static int
-send_ping(int ping_response, int ack, int set_timeout)
+send_ping(int ping_response, int set_timeout)
 {
 	this.num_pings++;
 	if (this.conn == CONN_DNS_NULL) {
@@ -463,14 +463,8 @@ send_next_frag()
 	size_t buflen, hmaclen = 4;
 
 	/* Get next fragment to send */
-	f = window_get_next_sending_fragment(this.outbuf, &this.next_downstream_ack);
+	f = window_get_next_sending_fragment(this.outbuf);
 	if (!f) {
-		if (this.outbuf->numitems > 0) {
-			/* There is stuff to send but we're out of sync, so send a ping
-			 * to get things back in order and keep the packets flowing */
-			send_ping(1, this.next_downstream_ack, 1);
-			this.next_downstream_ack = -1;
-		}
 		return; /* nothing to send */
 	}
 
@@ -503,8 +497,8 @@ send_next_frag()
 	buflen = sizeof(buf) - 1;
 	size_t enclen = get_encoder(this.enc_up)->encode(buf, &buflen, hmacbuf + 5, sizeof(hmacbuf) - 5);
 
-	DEBUG(3, " SEND DATA: seq %d, ack %d, len %" L "u, s%d e%d c%d flags %02X hmac=%s",
-			f->seqID, f->ack_other, f->len, f->start, f->end, f->compressed, flags,
+	DEBUG(3, " SEND DATA: seq %d, len %" L "u, s%d e%d c%d flags %02X hmac=%s",
+			f->seqID, f->len, f->start, f->end, f->compressed, flags,
 			tohexstr(hmac, hmaclen, 0));
 
 	id = send_query(buf, enclen);
@@ -1104,16 +1098,15 @@ client_tunnel()
 			QTRACK_DEBUG(2, "sending=%d, total=%d, next_ack=%d, outbuf.n=%" L "u",
 					sending, total, this.next_downstream_ack, this.outbuf->numitems);
 			/* Upstream traffic - this is where all ping/data queries are sent */
-			if (sending > 0 || total > 0 || this.next_downstream_ack >= 0) {
+			if (sending > 0 || total > 0) {
 
 				if (sending > 0) {
 					/* More to send - next fragment */
 					send_next_frag();
 				} else {
 					/* Send ping if we didn't send anything yet */
-					send_ping(0, this.next_downstream_ack, (this.num_pings > 20 &&
+					send_ping(0, (this.num_pings > 20 &&
 							this.num_pings % 50 == 0));
-					this.next_downstream_ack = -1;
 				}
 
 				sending--;
@@ -1993,7 +1986,7 @@ handshake_set_timeout()
 		/* run once to get RTT and again to set the timeout values */
 		for (int i = 0; this.running && i < 5; i++) {
 			id = (set && this.autodetect_server_timeout) ?
-				update_server_timeout(1) : send_ping(1, -1, 0);
+				update_server_timeout(1) : send_ping(1, 0);
 
 			len = sizeof(in);
 			if ((ret = handshake_waitdns(in, &len, 0, 'P', i + 1)) != 1) {
