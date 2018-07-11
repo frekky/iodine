@@ -28,6 +28,7 @@
 #include "base64.h"
 #include "base64u.h"
 #include "base128.h"
+#include "base256.h"
 
 uint8_t
 get_codec_from_name(char *encoding)
@@ -191,6 +192,7 @@ get_encoder(uint8_t codec)
 	case C_BASE128:
 		return b128;
 	case C_RAW:
+		return b256;
 	default:
 		return NULL;
 	}
@@ -266,7 +268,7 @@ downstream_encode(uint8_t *out, size_t *outlen, uint8_t *data, size_t datalen,
 	} else {
 		get_rand_bytes(hmac, sizeof(hmac));
 	}
-	DEBUG(6, "downstream_encode hmacbuf: len=%" L "u, %s", len + 4, tohexstr(hmacbuf, len + 4, 0));
+	DEBUG(6, "downstream_encode hmacbuf: len=%u, %s", len + 4, tohexstr(hmacbuf, len + 4, 0));
 	memcpy(hmacbuf + 9, hmac, hmaclen);
 
 	/* now encode data from hmacbuf (not including flags and length, +0 terminator) */
