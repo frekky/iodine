@@ -64,6 +64,15 @@ WSADATA wsa_data;
 #define WD_OLD	(1 << 6)
 #define WD_CODECTEST (1 << 7)
 
+static int raw_decode(uint8_t *packet, size_t len, struct pkt_metadata *q, int dns_fd);
+static void send_dns(int fd, struct dns_packet *q);
+static struct dns_packet *write_dns(struct dns_packet *q, int userid, uint8_t *data, size_t datalen, uint8_t flags);
+static void handle_full_packet(int userid, uint8_t *data, size_t len, int);
+static struct dns_packet *handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen);
+static void handle_a_request(int dns_fd, struct dns_packet *q, int fakeip);
+static void handle_ns_request(int dns_fd, struct dns_packet *q);
+static struct dns_packet *send_data_or_ping(int userid, struct dns_packet *q, int immediate);
+
 static int
 get_dns_fd(struct dnsfd *fds, struct sockaddr_storage *addr)
 {
