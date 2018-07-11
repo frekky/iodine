@@ -24,10 +24,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/param.h>
 
 #include "encoding.h"
 #include "base256.h"
+#include "common.h"
 
 #define BLKSIZE_RAW 1
 #define BLKSIZE_ENC 1

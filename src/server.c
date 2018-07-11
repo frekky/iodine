@@ -38,9 +38,6 @@
 #include "dns.h"
 #include "server.h"
 #include "base32.h"
-#include "base64.h"
-#include "base64u.h"
-#include "base128.h"
 #include "cache.h"
 #include "user.h"
 #include "auth.h"
@@ -901,7 +898,7 @@ static struct dns_packet *
 handle_dns_set_options(struct dns_packet *q, int userid, uint8_t *data, size_t len)
 {
 	uint16_t dnfragsize;
-	uint8_t flags[2], *p = data, out[40], *o = out;
+	uint8_t flags[2], *p = data, out[40], *o = out, nup, ndn;
 	enum user_conn_type newtuntype = USER_CONN_NONE;
 	int good = 0;
 	struct tun_user *u = &users[userid];
@@ -914,8 +911,15 @@ handle_dns_set_options(struct dns_packet *q, int userid, uint8_t *data, size_t l
 	readshort(data, &p, &dnfragsize);
 
 	/* set user options */
-	u->downenc = flags[0] & 7;
-	u->upenc = (flags[0] >> 3) & 7;
+	ndn = flags[0] & 7;
+	nup = (flags[0] >> 3) & 7;
+	if (!get_encoder(ndn) || !get_encoder(nup)) {
+		DEBUG(1, "user %d requested invalid up/down codecs, up=%hhu, dn=%hhu!", userid, nup, ndn);
+		return write_dns(q, userid, NULL, 0, DH_ERR(BADOPTS));
+	} else {
+		u->downenc = ndn;
+		u->upenc = nup;
+	}
 	u->down_compression = (flags[0] >> 6) & 1;
 	u->lazy = (flags[0] >> 7) & 1;
 

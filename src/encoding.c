@@ -206,8 +206,7 @@ encode_data(uint8_t *buf, size_t buflen, uint8_t *data, size_t datalen, uint8_t 
 
 	enc = get_encoder(codec);
 	if (enc == NULL) {
-		memcpy(buf, data, MIN(buflen, datalen));
-		return MIN(buflen, datalen);
+		return 0; /* no data encoded */
 	}
 
 	buflen--; /* encoders add trailing zero byte which is not counted in buflen */
@@ -221,8 +220,7 @@ unpack_data(uint8_t *buf, size_t buflen, uint8_t *data, size_t datalen, uint8_t 
 
 	enc = get_encoder(codec);
 	if (enc == NULL) {
-		memcpy(buf, data, MIN(buflen, datalen));
-		return MIN(buflen, datalen);
+		return 0; /* cannot unpack data */
 	}
 
 	return enc->decode(buf, &buflen, data, datalen);
