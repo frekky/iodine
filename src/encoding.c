@@ -266,7 +266,8 @@ downstream_encode(uint8_t *out, size_t *outlen, uint8_t *data, size_t datalen,
 	} else {
 		get_rand_bytes(hmac, sizeof(hmac));
 	}
-	DEBUG(6, "downstream_encode hmacbuf: len=%u, %s", len + 4, tohexstr(hmacbuf, len + 4, 0));
+	DEBUG(5, "downstream_encode hmac=%s, hmaclen = %" L "u", tohexstr(hmac, hmaclen, 1), hmaclen);
+	DEBUG(6, "hmacbuf: len=%u, %s", len + 4, tohexstr(hmacbuf, len + 4, 0));
 	memcpy(hmacbuf + 9, hmac, hmaclen);
 
 	/* now encode data from hmacbuf (not including flags and length, +0 terminator) */
@@ -358,13 +359,15 @@ downstream_decode(uint8_t *out, size_t *outlen, uint8_t *encdata, size_t encdata
 		memset(hmacbuf + 9, 0, hmaclen); /* clear HMAC field */
 		hmac_md5(hmac, hmac_key, 16, hmacbuf, len + 5); /* calculate HMAC */
 		if (memcmp(hmac, hmac_pkt, hmaclen) != 0) { /* verify */
-			DEBUG(3, "RX: bad HMAC pkt=%s, actual=%s, pktlen=%" L "u",
+			DEBUG(3, "RX: bad HMAC pkt=%s, actual=%s, pktlen=%u",
 					tohexstr(hmac_pkt, hmaclen, 0), tohexstr(hmac, hmaclen, 1),
 					len + 5);
-			DEBUG(6, "hmacbuf: %s", tohexstr(hmacbuf, len + 5, 0));
 			downstream_decode_err = DDERR_BADHMAC;
 			goto _dderr;
+		} else {
+			DEBUG(5, "downstream_decode hmac=%s, hmaclen=%" L "u)", tohexstr(hmac, hmaclen, 1), hmaclen);
 		}
+		DEBUG(6, "hmacbuf: len=%u, %s", len + 5, tohexstr(hmacbuf, len + 5, 0));
 	}
 	if (*outlen < len - 4 - hmaclen) {
 		goto _dderr;

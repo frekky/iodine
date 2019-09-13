@@ -261,7 +261,7 @@ window_reassemble_data(struct frag_buffer *w, uint8_t *data, size_t *len, uint8_
 
 			WDEBUG("reassemble: id %u [%" L "u], len %" L "u, offs %" \
 					L "u, total %" L "u, maxlen %" L "u, found %u/%" L "u, consecutive %u",
-					woffs, f->seqID, f->len, dest - data, *len, maxlen, found_frags, w->numitems, consecutive_frags);
+					f->seqID, woffs, f->len, dest - data, *len, maxlen, found_frags, w->numitems, consecutive_frags);
 
 			if (f->end == 1) {
 				WDEBUG("Found end of chunk! (seqID %u, chunk len %u, datalen %" L "u)",
