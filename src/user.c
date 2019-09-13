@@ -105,6 +105,8 @@ user_reset(int userid)
 	u->conn = CONN_DNS_NULL;
 	u->tuntype = USER_CONN_NONE; /* no connection active */
 	u->down_compression = 1;
+	u->hmaclen_down = 4;
+	u->hmaclen_up = 4;
 	u->lazy = 0;
 	u->cmc_down = rand(); /* CMC starts at random value each session */
 	u->upenc = C_BASE32; /* use base32 until something better is chosen */

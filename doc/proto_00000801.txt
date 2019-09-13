@@ -159,7 +159,7 @@ Notes:
 Command O: Set connection options (len 4-22)
 	2 bytes flags
     +76543210+76543210+
-    |LKUUUCCC|0000URIT|
+    |LKUUUCCC|00HJURIT|
     +--------+--------+
     2 bytes downstream fragsize
 	0-2 bytes remote UDP port (network byte order): 0 bytes if URI=0XX,
@@ -184,6 +184,8 @@ Option flags:
 	K:		Downstream data compression enabled (compressed before encoding)
 	CCC:	Downstream data codec (for all authenticated replies)
 	UUU:	Upstream codec (for all data packets)
+	H:      Upstream data packet HMAC length. 1 = 32-bit HMAC, 0 = 96-bit HMAC
+	J:      Downstream data packet HMAC length, same meaning as above.
     U:		Request UDP forward
     R:		If set, IP address is provided. If zero, forward to server localhost:port.
     I:		1=IPv6, 0=IPv4
@@ -206,15 +208,15 @@ Notes:
 --------------------------
 
 Upstream data (len 1+(10-18)+data):
-	1 char ASCII hex coded user ID
-	rest encoded with chosen upstream codec (default base32):
-	1 byte flags:
+    1 char ASCII hex coded user ID
+    rest encoded with chosen upstream codec (default base32):
+    4 bytes CMC
+    4 or 12 bytes HMAC
+    1 byte flags:
      76543210
     +--------+
-    |0000HKFS|
+    |00000KFS|
     +--------+
-    4 bytes CMC
-    4-12 bytes HMAC
     1 byte packet sequence ID
 
 Downstream data header (len 2+data):
@@ -239,7 +241,6 @@ Downstream ping reply header (len 9):
 Flags and fields:
 	I = responded to immediately (for RTT calculation) - downstream only
 	P = ping flag: see "Downstream ping reply header"; data field is absent
-	H = 1: 32-bit HMAC, 0: 96-bit HMAC (upstream only)
 	K = Compression enabled
 	F = First fragment flag
 	S = Last fragment flag
@@ -363,19 +364,20 @@ according to RFC 2104. The key is calculated according to the following process:
 	3. Calculate MD5(client challenge)
 	4. Append result from (2) to result from (1)
 	5. Append result from (3) to result from (4) and pad with 0x2C to 64 bytes
-	6. Bitwise XOR result from (5) with 0xB5
+	6. Bitwise XOR each byte of result from (5) with 0xB5
 	7. Calculate the MD5 hash of the result from (6), this is the key for the HMAC.
 
 The HMAC is calculated as follows for queries:
-	1. Packet data and header is assembled (data is not encoded yet).
-	2. HMAC field is set to 0.
-	3. Data to be encoded is appended to string (ie. cmd + userid chars) at
-		beginning of query name.
-	4. Length (32 bits, network byte order) is prepended to the result from (3)
-		Length = (len of chars at start of query) + (len of raw data) 
-	5. HMAC is calculated using the output from (4) and inserted into the HMAC
-		field in the data header. The data is then encoded (ie. base32 + dots)
-		and the query is sent.
+	1. Put length into the beginning of a buffer (32 bits, network byte order)
+	   Length = (len of chars at start of query) + (len of raw data)
+	2. Append any chars that would be present at the start of the
+	   query hostname (with any alpha chars converted to uppercase)
+	3. Append/assemble raw (not yet encoded) iodine protocol data into the
+	   buffer, with HMAC field initialised to 0
+	4. HMAC is calculated using data in the buffer and inserted into the HMAC
+	   field in the data header. The iodine protocol data (except the first
+	   cmd/user chars) is then encoded (ie. base32), made into the hostname
+	   of a DNS query, etc. and then sent.
 
 HMAC for responses is calculated following mostly the same procedure with the
 following notes:

@@ -173,7 +173,7 @@ send_data_or_ping(int userid, struct dns_packet *q, int immediate)
 	uint8_t pkt[DOWNSTREAM_DATA_HDR + f->len], *p = pkt;
 
 	/* build downstream data packet (see doc/proto_xxxxxxxx.txt) for details) */
-	/* Set data header flags: PI000KFL */
+	/* Set data header flags: PI000KFS */
 	*p++ = ((immediate & 1) << 6) | ((f->compressed & 1) << 2) | (f->start << 1) | f->end;
 	*p++ = f->seqID & 0xFF;
 	putdata(&p, f->data, f->len);
@@ -255,12 +255,15 @@ static void
 check_pending_queries(struct timeval *maxwait)
 /* checks all pending queries from all users and answers those which have timed out */
 {
-	struct dns_packet *tosend;
+	struct dns_packet *tosend, *ans;
 	for (int userid = 0; userid < created_users; userid++) {
 		if (!user_active(userid) || users[userid].tuntype == USER_CONN_NONE)
 			continue;
 		while (qmem_max_wait(users[userid].qmem, &tosend, maxwait)) {
-			send_data_or_ping(userid, tosend, 0);
+			ans = send_data_or_ping(userid, tosend, 0);
+			send_dns(get_dns_fd(&server.dns_fds, &tosend->m.from), ans);
+			dns_packet_destroy(ans);
+			dns_packet_destroy(tosend);
 		}
 	}
 }
@@ -932,6 +935,9 @@ handle_dns_set_options(struct dns_packet *q, int userid, uint8_t *data, size_t l
 	u->down_compression = (flags[0] >> 6) & 1;
 	u->lazy = (flags[0] >> 7) & 1;
 
+	u->hmaclen_down = (flags[1] >> 4) ? 4 : 12;
+	u->hmaclen_up = (flags[1] >> 5) ? 4 : 12;
+
 	DEBUG(1, "OPTS user %d: lazy %hhd, comp_down %hhd, enc_up %s, enc_dn %s, fragsize %hu",
 		  userid, u->lazy, u->down_compression, get_encoder(u->upenc)->name,
 		  get_encoder(u->downenc)->name, dnfragsize);
@@ -1110,16 +1116,16 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 }
 
 static struct dns_packet *
-handle_dns_data(struct dns_packet *q, int userid, uint8_t *data, size_t len)
+handle_dns_data(struct dns_packet *q, int userid, uint8_t *unpacked, size_t len)
 {
 	fragment f;
 	struct dns_packet *ans;
 	struct tun_user *u = &users[userid];
-	uint8_t *p = data, flags, hmaclen;
+	uint8_t *p = unpacked, flags;
 
 	/* Need 2 byte header + >=1 byte data */
 	if (len < UPSTREAM_DATA_HDR + 1) {
-		DEBUG(3, "BADLEN: expected upstream data pkt >2 bytes, got %" L "u bytes", len);
+		DEBUG(3, "BADLEN: expected upstream data pkt >3 bytes, got %" L "u bytes", len);
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADLEN));
 	}
 
@@ -1137,11 +1143,8 @@ handle_dns_data(struct dns_packet *q, int userid, uint8_t *data, size_t len)
 	f.start = (flags >> 1) & 1;
 	f.end = flags & 1;
 
-	/* skip HMAC and CMC */
-	hmaclen = ((flags >> 3) & 1) ? 4 : 12;
-	p += 4 + hmaclen;
-
-	f.len = len - (p - data);
+	/* HMAC makes sure the packet isn't truncated, so this should be OK */
+	f.len = len - (p - unpacked);
 	f.data = p;
 
 	DEBUG(3, "frag seq %3u, datalen %5lu, compression %1d, s%1d e%1d",
@@ -1225,7 +1228,8 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 	if (encdatalen < 5)
 		return write_dns(q, -1, NULL, 0, DH_ERR(BADLEN));
 
-	cmd = toupper(encdata[0]);
+	/* get the cmd and change to uppercase for HMAC calculation */
+	cmd = encdata[0] = toupper(encdata[0]);
 	DEBUG(3, "NULL request encdatalen %" L "u, cmd '%c'", encdatalen, cmd);
 
 	/* Pre-login commands: backwards compatible with protocol 00000402 */
@@ -1246,7 +1250,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 		userid = HEX2INT(cmd);
 		cmd = 'd'; /* flag for data packet - not part of protocol */
 	} else {
-		userchar = toupper(encdata[1]);
+		userchar = encdata[1] = toupper(encdata[1]); /* make uppercase for HMAC */
 		userid = HEX2INT(userchar);
 		if (!isxdigit(userchar) || !is_valid_user(userid)) {
 			/* Invalid user ID or bad DNS query */
@@ -1262,7 +1266,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 	if (cmd == 'd') {
 		/* now we know userid exists, we can set encoder */
 		enc = users[userid].upenc;
-		hmaclen = 4; // XXX the data packet header actually tells us if it has 4 or 12 byte HMAC, this may be incorrect!
+		hmaclen = users[userid].hmaclen_up;
 		headerlen = 1;
 		pktlen = encdatalen - 1;
 		minlen = 10;
@@ -1275,22 +1279,34 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 	}
 
 	/* Following commands have everything after cmd and userid encoded
-	 *  Header consists of 4 bytes CMC + 4-12 bytes HMAC */
-	uint8_t unpacked[512], *p;
-	size_t raw_len;
-	raw_len = unpack_data(unpacked, sizeof(unpacked), encdata + headerlen,
-			pktlen, enc);
+	 *  Header consists of 4 bytes CMC + 4 or 12 bytes HMAC
+	 *  unpack data with enough space for HMAC stuff as well */
+	uint8_t hmacbuf[512], *p;
+	const uint8_t *unpacked = hmacbuf + 4 + headerlen;
+	const size_t unpacked_len = sizeof(hmacbuf) - (unpacked - hmacbuf);
+
+	const size_t raw_len = unpack_data(unpacked, unpacked_len, encdata + headerlen, pktlen, enc);
 	if (raw_len < minlen) {
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADLEN));
 	}
 
-	p = unpacked;
-	readlong(unpacked, &p, &cmc);
+	p = hmacbuf;
+	putlong(&p, raw_len + headerlen); /* 4 bytes length prefix for HMAC */
+	memcpy(p, encdata, headerlen), p += headerlen; /* command and userid char (header) */
+	readlong(unpacked, &p, &cmc); /* CMC is first 4 bytes of unpacked data */
 
 	/* Login request - after version check successful, do not check auth yet */
 	if (cmd == 'L') {
 		return handle_dns_login(q, unpacked + 4, raw_len - 4, userid, cmc);
 	}
+
+	/* backup HMAC from packet then clear it */
+	memcpy(hmac_pkt, p, hmaclen);
+	memset(p, 0, hmaclen), p += hmaclen;
+
+	/* commands have data following the header (cmc + hmac) */
+	const uint8_t *cmd_data = p;
+	const size_t cmd_len = raw_len - (p - unpacked);
 
 	/* now verify HMAC!
 	 * Packet data and header is assembled (data is not encoded yet).
@@ -1301,24 +1317,15 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 	5. HMAC is calculated using the output from (4) and inserted into the HMAC
 		field in the data header. The data is then encoded (ie. base32 + dots)
 		and the query is sent. */
-	uint8_t hmacbuf[raw_len + 4 + headerlen];
-	p = hmacbuf;
-	memcpy(hmac_pkt, unpacked + 4, hmaclen); /* backup HMAC from packet */
-	putlong(&p, raw_len + headerlen); /* 4 bytes length */
-	// XXX hmac breaks if cmd/userid case switched!
-	memcpy(hmacbuf + 4, encdata, headerlen); /* 1-2 bytes command and userid char */
-	memcpy(hmacbuf + 4 + headerlen, unpacked, raw_len);	/* copy signed data to tmp buffer */
-	memset(hmacbuf + headerlen + 8, 0, hmaclen); /* clear HMAC field */
-	hmac_md5(hmac, users[userid].hmac_key, 16, hmacbuf, sizeof(hmacbuf));
-	if (memcmp(hmac, hmac_pkt, hmaclen) != 0) { /* verify signed data */
+	const size_t hmacbuf_len = raw_len + (unpacked - hmacbuf);
+	hmac_md5(hmac, users[userid].hmac_key, 16, hmacbuf, hmacbuf_len);
+	if (memcmp(hmac, hmac_pkt, hmaclen) != 0) {    /* verify signed data */
 		DEBUG(2, "HMAC mismatch! pkt: 0x%s, actual: 0x%s (%" L "u)",
 			tohexstr(hmac_pkt, hmaclen, 0),	tohexstr(hmac, hmaclen, 1), hmaclen);
+		DEBUG(6, "    hmacbuf: len=%" L "u, %s", hmacbuf_len,
+			tohexstr(hmacbuf, hmacbuf_len, 0));
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADAUTH));
 	}
-
-	/* most commands have data following the header (cmc + hmac) */
-	uint8_t *cmd_data = unpacked + 4 + hmaclen;
-	size_t cmd_len = raw_len - 4 - hmaclen;
 
 	switch (cmd) {
 	case 'U':
@@ -1333,7 +1340,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 			return write_dns(q, userid, NULL, 0, DH_ERR(BADOPTS));
 		}
 
-		return handle_dns_data(q, userid, unpacked, raw_len);
+		return handle_dns_data(q, userid, cmd_data, cmd_len);
 	case 'P':
 		return handle_dns_ping(q, userid, cmd_data, cmd_len);
 	case 'O':

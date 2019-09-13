@@ -45,6 +45,8 @@ struct tun_user {
 	int remote_udp_fd;
 	enum connection conn; /* using raw UDP or DNS packets */
 	enum user_conn_type tuntype; /* type of iodine tunnel connection requested, USER_CONN_NONE if disconnected */
+	int hmaclen_up; /* byte length of HMAC in upstream data packets */
+	int hmaclen_down; /* byte length of HMAC in downstream data packets */
 	char lazy;
 	char id;
 	uint8_t downenc;

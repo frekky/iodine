@@ -74,7 +74,7 @@ client_set_hostname_maxlen(size_t i)
 	if (i <= 0xFF && i != this.hostname_maxlen) {
 		this.hostname_maxlen = i;
 		this.maxfragsize_up = get_raw_length_from_dns(this.hostname_maxlen - 1,
-				get_encoder(this.enc_up), this.topdomain) - UPSTREAM_DATA_HDR;
+				get_encoder(this.enc_up), this.topdomain) - UPSTREAM_DATA_HDR; // XXX this doesn't account for CMC or HMAC!! [as of proto 801]
 		if (this.outbuf)
 			window_buffer_resize(this.outbuf, this.outbuf->length, this.maxfragsize_up);
 	}
@@ -377,31 +377,22 @@ send_packet(char cmd, const uint8_t *rawdata, const size_t rawdatalen, const int
 		memcpy(data + 10 + hmaclen, rawdata, rawdatalen);
 	}
 
-	p = data + 6;
+	putlong(&p, (uint32_t) len);
+	*p++ = toupper(cmd);
+	*p++ = toupper(this.userid_char);
 	putlong(&p, CMC(this.cmc_up));
 
+	if (hmaclen > 0) {
+		/* calculate HMAC as specified in doc/proto_00000801.txt
+		 * section "Protocol security" */
+		memset(p, 0, hmaclen);
+		hmac_md5(hmac, this.hmac_key, 16, data, len + 4);
+		memcpy(p, hmac, hmaclen);
+	}
+
+	/* build the un-dotted hostname: cmd+userid+base32(data) */
 	buf[0] = cmd;
 	buf[1] = this.userid_char;
-
-	if (hmaclen) {
-		/* calculate HMAC as specified in doc/proto_00000801.txt
-		 * section "Protocol security"
-		1. Packet data and header is assembled (data is not encoded yet).
-		2. HMAC field is set to 0.
-		3. Data to be encoded is appended to string (ie. cmd + userid chars) at
-			beginning of query name.
-		4. Length (32 bits, network byte order) is prepended to the result from (3)
-			Length = (len of chars at start of query) + (len of raw data)
-		5. HMAC is calculated using the output from (4) and inserted into the HMAC
-			field in the data header. The data is then encoded (ie. base32 + dots)
-			and the query is sent. */
-		p = data;
-		putlong(&p, (uint32_t) len);
-		memcpy(data + 4, buf, 2);
-		memset(data + 10, 0, hmaclen);
-		hmac_md5(hmac, this.hmac_key, 16, data, len + 4);
-		memcpy(data + 10, hmac, hmaclen);
-	}
 
 	size_t encdatalen, buflen = sizeof(buf);
 	encdatalen = b32->encode(buf + 2, &buflen, data + 6, len - 2);
@@ -457,7 +448,7 @@ static void
 send_next_frag()
 /* Sends next available fragment of data from the outgoing window buffer */
 {
-	static uint8_t buf[MAX_FRAGSIZE_UP], flags;
+    uint8_t buf[MAX_FRAGSIZE_UP], flags;
 	uint16_t id;
 	fragment *f;
 	size_t buflen, hmaclen = 4;
@@ -467,6 +458,9 @@ send_next_frag()
 	if (!f) {
 		return; /* nothing to send */
 	}
+
+	/* upstream data flags (00000CFL) */
+	flags = (f->compressed << 2) | (f->start << 1) | f->end;
 
 	/* Build upstream data header (see doc/proto_xxxxxxxx.txt) with HMAC.
 	 * 	1. Packet data and header is assembled (data is not encoded yet).
@@ -478,30 +472,30 @@ send_next_frag()
 		5. HMAC is calculated using the output from (4) and inserted into the HMAC
 			field in the data header. The data is then encoded (ie. base32 + dots)
 			and the query is sent. */
-	uint8_t hmacbuf[4 + 1 + 5 + hmaclen + 1 + f->len], hmac[16], *p;
+	uint8_t hmacbuf[4 + 1 + 4 + hmaclen + 1 + 1 + f->len], hmac[16], *p;
 	p = hmacbuf;
-	/* flags (0000HCFL); hmaclen is either 4 or 12 */
-	flags = ((hmaclen == 4 ? 1 : 0) << 3) | (f->compressed << 2) | (f->start << 1) | f->end;
-	putlong(&p, sizeof(hmacbuf));		/* data length (only used for HMAC) */
-	putbyte(&p, (uint8_t) this.userid_char); /* First byte is hex userid */
+	putlong(&p, sizeof(hmacbuf) - 4);	/* data length (only used for HMAC) */
+	putbyte(&p, (uint8_t) toupper(this.userid_char)); /* First byte is hex userid */
+	putlong(&p, CMC(this.cmc_up));		/* 4 bytes CMC (encoding will start from here, inclusive) */
+	memset(p, 0, hmaclen), p += hmaclen;	/* 4 or 12 bytes zero'ed HMAC field */
 	putbyte(&p, flags);					/* one byte flags */
-	putlong(&p, CMC(this.cmc_up));		/* 4 bytes CMC */
-	memset(p, 0, hmaclen), p+= hmaclen;	/* 4-12 bytes zero'ed HMAC field */
 	putbyte(&p, f->seqID & 0xFF);		/* one byte fragment sequence ID */
 	putdata(&p, f->data, f->len);		/* fragment data */
 	hmac_md5(hmac, this.hmac_key, 16, hmacbuf, sizeof(hmacbuf));
-	memcpy(hmacbuf + 10, hmac, hmaclen); /* copy in HMAC */
+	memcpy(hmacbuf + 9, hmac, hmaclen);	/* copy in HMAC */
 
-	/* encode data prepared in hmacbuf, skiping length + userid char (5 bytes) */
+	/* encode data prepared in hmacbuf, skipping length + userid char (5 bytes) */
 	buf[0] = this.userid_char;
-	buflen = sizeof(buf) - 1;
-	size_t enclen = get_encoder(this.enc_up)->encode(buf, &buflen, hmacbuf + 5, sizeof(hmacbuf) - 5);
+	buflen = sizeof(buf) - 1; /* userid char */
+	size_t enclen = get_encoder(this.enc_up)->encode(buf + 1, &buflen, hmacbuf + 5, sizeof(hmacbuf) - 5);
 
 	DEBUG(3, " SEND DATA: seq %d, len %" L "u, s%d e%d c%d flags %02X hmac=%s",
 			f->seqID, f->len, f->start, f->end, f->compressed, flags,
 			tohexstr(hmac, hmaclen, 0));
 
-	id = send_query(buf, enclen);
+	DEBUG(6, "    hmacbuf: len=%" L "u, %s", sizeof(hmacbuf), tohexstr(hmacbuf, sizeof(hmacbuf), 0));
+
+	id = send_query(buf, enclen + 1);
 	/* Log query ID as being sent now */
 	query_sent_now(id);
 	window_tick(this.outbuf);
@@ -599,6 +593,7 @@ handle_data_servfail()
 	}
 }
 
+/* verify the HMAC on a raw packet */
 static int
 raw_validate(uint8_t **packet, size_t len, uint8_t *cmd)
 {
@@ -998,14 +993,10 @@ tunnel_dns()
 		window_tick(this.outbuf);
 	}
 
-	if (f.len == 0) { /* Apparently no data waiting from server */
-		if (!ping)
-			DEBUG(1, "[WARNING] Received downstream data fragment with 0 length and NOT a ping!");
-		return;
+	if (!ping) {
+		/* Downstream data traffic */
+		window_process_incoming_fragment(this.inbuf, &f);
 	}
-
-	/* Downstream data traffic */
-	window_process_incoming_fragment(this.inbuf, &f);
 
 	this.num_frags_recv++;
 
@@ -1276,25 +1267,29 @@ static void
 send_codectest(uint8_t *dataq, uint8_t dqlen, uint16_t drlen, int dnchk)
 /* dnchk == 1: downstream codec check; dnchk == 0: upstream */
 {
-	uint8_t buf[34 + dqlen], hmac[16], header[4 + 2 + 20], *p, *hp;
+	uint8_t buf[34 + dqlen], hmac[16], header[4 + 2 + 20], *p;
 	p = header;
 	putlong(&p, 22); /* HMAC-only length field */
-	putbyte(&p, (buf[0] = 'u'));
-	putbyte(&p, (buf[1] = this.userid_char));
+	putbyte(&p, 'U');
+	putbyte(&p, toupper(this.userid_char));
 	putlong(&p, CMC(this.cmc_up));
-	memset((hp = p), 0, 12); /* clear HMAC field */
-	p += 12;
+	memset(p, 0, 12), p += 12; /* clear HMAC field */
 	putbyte(&p, (dnchk & 1)); /* 1 byte flags */
 	putbyte(&p, dqlen);
 	putshort(&p, drlen);
 	hmac_md5(hmac, this.hmac_key, 16, header, sizeof(header));
-	memcpy(hp, hmac, 12);
 
-	DEBUG(5, "TX codectest: CMC %08x HMAC %s (12) hmacbuf %s", this.cmc_up, tohexstr(hmac, 12, 0), tohexstr(header, 26, 1));
+	DEBUG(5, "TX codectest: CMC %08x HMAC %s (12) hmacbuf %s (26)",
+			this.cmc_up, tohexstr(hmac, 12, 0), tohexstr(header, 26, 1));
+
+	memcpy(header + 10, hmac, 12); /* copy the calculated hmac into the packet buffer to send */
 
 	size_t buflen = 32;
 	if (b32->encode(buf + 2, &buflen, header + 6, 20) != 32)
 		DEBUG(1, "upenctest got wrong encoded headerlen!");
+
+	buf[0] = 'u';
+	buf[1] = this.userid_char;
 	/* Append codec test data without changing it */
 	memcpy(buf + 34, dataq, dqlen);
 
@@ -1325,7 +1320,7 @@ send_server_options(uint8_t *flags)
 	/* standard options flags byte: see docs/proto_xxx.txt */
 	buf[0] = ((!!this.lazymode) << 7) | ((!!this.compression_down) << 6) |
 			((this.enc_up & 7) << 3) | (this.enc_down & 7);
-	buf[1] = 0;
+	buf[1] = (1 << 5) | (1 << 4); /* set upstream and downstream data HMAC to 32 bits */
 	putshort(&p, this.maxfragsize_down);
 
 	/* connection options */
@@ -1374,7 +1369,7 @@ handshake_version(uint8_t *sc)
 		send_version(PROTOCOL_VERSION);
 
 		len = sizeof(in);
-		if ((ret = handshake_waitdns(in, &len, 0, 'V', i + 1)) != 1 || len < 9) {
+		if ((ret = handshake_waitdns(in, &len, 0, 'V', i + 1)) != 1 || len < 8) {
 			fprintf(stderr, "Retrying version check...\n");
 			if (ret == 0) print_downstream_err();
 			continue;
