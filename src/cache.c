@@ -113,9 +113,10 @@ qmem_append(struct qmem_buffer *buf, struct dns_packet *q)
 /* Appends incoming query to the buffer. */
 {
 	if (buf->num_pending >= buf->size) {
-		/* this means we have QMEM_LEN *pending* queries; drop oldest to make space */
+		/* this means we have QMEM_LEN *pending* queries; write new query to [end] */
 		QMEM_DEBUG(2, buf, "Full of pending queries! Replacing old query %hu with new %hu.",
-				   buf->queries[buf->start]->id, q->id);
+				   buf->queries[buf->end]->id, q->id);
+
 	}
 
 	if (buf->length < buf->size) {
@@ -128,8 +129,9 @@ qmem_append(struct qmem_buffer *buf, struct dns_packet *q)
 	QMEM_DEBUG(5, buf, "add query ID %d", q->id);
 
 	/* Copy query pointer into end of buffer */
-	q->refcount++;
+	dns_packet_destroy(buf->queries[buf->end]);
 	buf->queries[buf->end] = q;
+	q->refcount++;
 	buf->end = (buf->end + 1) % buf->size;
 	buf->num_pending += 1;
 }
@@ -188,8 +190,10 @@ qmem_max_wait(struct qmem_buffer *buf, struct dns_packet **sendq, struct timeval
 	gettimeofday(&now, NULL);
 
 	q = buf->queries[buf->start_pending];
-	if (sendq)
+	if (sendq) {
 		*sendq = q;
+		q->refcount++;
+	}
 
 	/* queries will always be in time order, so first in buf is oldest */
 	timersub(&now, &q->m.time_recv, &age);
