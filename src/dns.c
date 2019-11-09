@@ -46,9 +46,13 @@
 
 void
 dns_packet_destroy(struct dns_packet *p)
+/* frees memory of dns_packet structure if it is not being used anywhere else */
 {
-	if (!p)
+	if (!p) {
+		DEBUG(8, "dns_packet_destroy: packet is NULL");
 		return;
+	}
+	DEBUG(8, "dns_packet_destroy: packet=%p, refcount=%zu", (void *)p, p->refcount);
 	if (p->refcount > 1) {
 		p->refcount--;
 		return;
@@ -62,6 +66,7 @@ dns_packet_destroy(struct dns_packet *p)
 
 struct dns_packet *
 dns_packet_create(uint16_t qdcount, uint16_t ancount, uint16_t nscount, uint16_t arcount)
+/* allocates memory and initialises an empty dns_packet */
 {
 	struct dns_packet *p;
 	p = calloc(1, sizeof(struct dns_packet));

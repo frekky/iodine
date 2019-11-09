@@ -43,11 +43,9 @@ struct qmem_buffer {
 
 struct qmem_buffer *qmem_init(size_t cachesize);
 void qmem_destroy(struct qmem_buffer *buf);
-void qmem_set_timeout(struct qmem_buffer *buf, time_t timeout_ms);
-struct dns_packet *qmem_is_cached(struct qmem_buffer *buf, struct dns_packet *q);
+int qmem_is_cached(struct qmem_buffer *buf, struct dns_packet *q, struct dns_packet **cached_q);
 void qmem_append(struct qmem_buffer *buf, struct dns_packet *q);
 void qmem_answered(struct qmem_buffer *buf, struct dns_packet *ans);
-struct dns_packet * qmem_get_next_response(struct qmem_buffer *buf);
 int qmem_max_wait(struct qmem_buffer *buf, struct dns_packet **sendq, struct timeval *maxwait);
 
 #endif /* SRC_CACHE_H_ */

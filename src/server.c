@@ -167,6 +167,7 @@ send_data_or_ping(int userid, struct dns_packet *q, int immediate)
 
 	/* check if we have data, if not, send a ping instead */
 	if (!(f = window_get_next_sending_fragment(u->outgoing))) {
+		DEBUG(3, "no fragment to send -- replying with ping");
 		return send_ping(userid, q, immediate);
 	}
 
@@ -428,6 +429,7 @@ tunnel_dns(int dns_fd)
 		}
 	}
 	if (ans) {
+		DEBUG(7, "tunnel_dns got answer ")
 		send_dns(dns_fd, ans);
 		dns_packet_destroy(ans);
 	}
@@ -1052,11 +1054,13 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 	up_seq = *p++;
 	dn_seq = *p++;
 
-	/* Check if query is cached */
-	if (u->qmem && (cached = qmem_is_cached(u->qmem, q))) {
+	/* Check if query is cached, and if the cached query contains an answer */
+	if (u->qmem && qmem_is_cached(u->qmem, q, &cached)) {
 		if (q->ancount) {
 			return cached; /* answer from cache if cached query has answer section */
 		} else {
+			/* server has received the query but no cached answer exists */
+			dns_packet_destroy(cached);
 			return NULL;
 		}
 	}
@@ -1107,6 +1111,7 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 			u->outgoing->windowsize = dn_winsize;
 			u->incoming->windowsize = up_winsize;
 		}
+		DEBUG(3, "sending ping in response to ping: respond=%d, u->tuntype=%d", respond, u->tuntype);
 		return send_ping(userid, q, 1);
 	}
 
@@ -1130,7 +1135,7 @@ handle_dns_data(struct dns_packet *q, int userid, uint8_t *unpacked, size_t len)
 	}
 
 	/* Check if cached */
-	if ((ans = qmem_is_cached(u->qmem, q))) {
+	if (qmem_is_cached(u->qmem, q, &ans)) {
 		return ans;
 	} else {
 		qmem_append(u->qmem, q);
@@ -1257,9 +1262,11 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 			return write_dns(q, -1, NULL, 0, DH_ERR(BADAUTH));
 		}
 	}
+	DEBUG(6, "got userid %d", userid);
 
 	/* Check authentication status */
 	if (cmd != 'L' && !users[userid].authenticated) {
+		DEBUG(3, "replying with BADAUTH to user %d", userid);
 		return write_dns(q, -1, NULL, 0, DH_ERR(BADAUTH));
 	}
 
@@ -1277,6 +1284,8 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 		pktlen = encdatalen - headerlen; /* pktlen is length of packet to decode */
 		minlen = hmaclen + 4; /* minimum raw decoded length of header */
 	}
+	DEBUG(7, "cmd='%c', upenc=%hhu, hmaclen=%" L "u, headerlen=%" L "u, pktlen=%" L "u, minlen=%" L "u",
+			cmd, enc, hmaclen, headerlen, pktlen, minlen);
 
 	/* Following commands have everything after cmd and userid encoded
 	 *  Header consists of 4 bytes CMC + 4 or 12 bytes HMAC
@@ -1287,6 +1296,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 
 	const size_t raw_len = unpack_data(unpacked, unpacked_len, encdata + headerlen, pktlen, enc);
 	if (raw_len < minlen) {
+		DEBUG(2, "unpack_data got decoded data length %" L "u < expected minimum %" L "u", raw_len, minlen);
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADLEN));
 	}
 
@@ -1337,6 +1347,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 	case 'd':
 		/* we can only process data once a connection has been requested */
 		if (users[userid].tuntype == USER_CONN_NONE) {
+			DEBUG(2, "user %d sent data without connection", userid);
 			return write_dns(q, userid, NULL, 0, DH_ERR(BADOPTS));
 		}
 
