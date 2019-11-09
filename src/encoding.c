@@ -58,6 +58,8 @@ get_raw_length_from_dns(size_t dns_hostlen, struct encoder *enc, const uint8_t *
 		return enc_datalen;
 }
 
+
+// TODO: un-bork & test this calculation
 size_t
 get_encoded_dns_length(size_t raw_bytes, struct encoder *enc, const uint8_t *topdomain)
 /* Returns length of encoded data from original data length orig_len; */
@@ -71,112 +73,6 @@ get_encoded_dns_length(size_t raw_bytes, struct encoder *enc, const uint8_t *top
 
 	dots += len / DNS_MAXLABEL; /* number of dots needed in data */
 	return len + dots + HOSTLEN(topdomain);
-}
-
-size_t
-build_hostname(uint8_t *buf, size_t buflen, const uint8_t *data, const size_t datalen,
-		const char *topdomain, struct encoder *encoder, size_t maxlen, size_t header_len)
-/* Builds DNS-compatible hostname for data using specified encoder and topdomain
- * Encoded data is placed into buf. */
-{
-	size_t space, enc;
-	uint8_t *b;
-
-	buflen -= header_len;
-	buf += header_len;
-	maxlen -= header_len;
-	memset(buf, 0, buflen);
-
-	maxlen = MIN(maxlen, buflen);
-
-	/* 1 byte for dot before topdomain + 1 byte extra for something */
-	space = maxlen - strlen(topdomain) - (maxlen / DNS_MAXLABEL) - 2;
-
-	enc = encoder->encode(buf, &space, data, datalen);
-//	warnx("build_hostname: enc %lu, predicted %lu; maxlen %lu, header %lu, datalen %lu, space %lu",
-//		  encdata_len, encoder->get_encoded_length(datalen), maxlen, header_len, datalen, space);
-
-	enc = inline_dotify(buf - header_len, buflen + header_len) - header_len;
-
-	b = buf + enc;
-
-	/* move b back one step to see if the dot is there */
-	b--;
-	if (*b != '.')
-		*++b = '.';
-	b++;
-	/* move b ahead of the string so we can copy to it */
-
-	strncpy((char *)b, topdomain, strlen(topdomain)+1);
-//	warnx("build_hostname: host '%s' (sl %lu, actual %lu), topdomain '%s'",
-//			buf - header_len, strlen(buf - header_len), encdata_len + header_len + strlen(topdomain)+1, b);
-
-	return space;
-}
-
-size_t
-inline_dotify(uint8_t *buf, size_t buflen)
-{
-	unsigned dots;
-	size_t pos, total;
-	uint8_t *reader, *writer;
-
-	total = strlen((char *)buf);
-	dots = total / DNS_MAXLABEL;
-
-	writer = buf;
-	writer += total;
-	writer += dots;
-
-	total += dots;
-	if (strlen((char *)buf) + dots > buflen) {
-		writer = buf;
-		writer += buflen;
-		total = buflen;
-	}
-
-	reader = writer - dots;
-	pos = (reader - buf) + 1;
-
-	while (dots) {
-		*writer-- = *reader--;
-		pos--;
-		if (pos % DNS_MAXLABEL == 0) {
-			*writer-- = '.';
-			dots--;
-		}
-	}
-
-	/* return new length of string */
-	return total;
-}
-
-size_t
-inline_undotify(uint8_t *buf, size_t len)
-{
-	size_t pos;
-	unsigned dots;
-	uint8_t *reader, *writer;
-
-	writer = buf;
-	reader = writer;
-
-	pos = 0;
-	dots = 0;
-
-	while (pos < len) {
-		if (*reader == '.') {
-			reader++;
-			pos++;
-			dots++;
-			continue;
-		}
-		*writer++ = *reader++;
-		pos++;
-	}
-
-	/* return new length of string */
-	return len - dots;
 }
 
 struct encoder *

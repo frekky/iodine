@@ -63,9 +63,6 @@ uint8_t get_codec_from_name(char *encoding);
 size_t get_raw_length_from_dns(size_t enc_bytes, struct encoder *enc, const uint8_t *topdomain);
 size_t get_encoded_dns_length(size_t raw_bytes, struct encoder *enc, const uint8_t *topdomain);
 
-size_t build_hostname(uint8_t *, size_t, const uint8_t *, const size_t, const char *, struct encoder *, size_t, size_t);
-size_t inline_dotify(uint8_t *, size_t);
-size_t inline_undotify(uint8_t *, size_t);
 struct encoder *get_encoder(uint8_t codec);
 size_t encode_data(uint8_t *, size_t, uint8_t *, size_t, uint8_t);
 size_t unpack_data(uint8_t *, size_t, uint8_t *, size_t, uint8_t);

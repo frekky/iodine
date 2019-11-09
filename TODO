@@ -6,8 +6,9 @@ iodine "speedy"  - https://github.com/frekky/iodine
 
 TODO list for unstable branch:
  - Finish protocol update to 00000801.
- - Randomly generate test cases for different encodings
- - UDP-UDP forwarding over iodine (for example to use with OpenVPN)
- - Fix HMAC being broken with userid/command caseswap
+ - Randomly generate codectests for different encodings 
+ - UDP-UDP forwarding over iodine (for example to use with OpenVPN or Wireguard)
+ - Fix HMAC being broken with userid/command caseswap (done?)
  - Disable root requirement for unix systems & add build option to disable TUN
  - Fix Windows support by removing outdated TUN/TAP, replace with only UDP-UDP
+ - Write new tests for encoding & decoding & sliding window code 
