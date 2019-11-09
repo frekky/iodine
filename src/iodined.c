@@ -251,47 +251,33 @@ int
 main(int argc, char **argv)
 {
 	extern char *__progname;
-	char *listen_ip4;
-	char *listen_ip6;
-	char *errormsg;
+	char *listen_ip4 = NULL;
+	char *listen_ip6 = NULL;
+	char *errormsg = NULL;
 #ifndef WINDOWS32
 	struct passwd *pw = NULL;
 #endif
 	md5_state_t md;
-	int foreground;
-	char *password;
-	char *username;
-	char *newroot;
-	char *context;
-	char *device;
-	char *pidfile;
+	int foreground = 0;
+	char *password = NULL;
+	char *username = NULL;
+	char *newroot = NULL;
+	char *context = NULL;
+	char *device = NULL;
+	char *pidfile = NULL;
 
 	int choice;
 
-	int skipipconfig;
-	char *netsize;
-	int ns_get_externalip;
-	int retval;
+	int skipipconfig = 0;
+	int ns_get_externalip = 0;
+	int retval = 0;
 
 #ifdef HAVE_SYSTEMD
 	int nb_fds;
 #endif
 
-	errormsg = NULL;
-	username = NULL;
-	newroot = NULL;
-	context = NULL;
-	device = NULL;
-	foreground = 0;
-	listen_ip4 = NULL;
-	listen_ip6 = NULL;
-
-	ns_get_externalip = 0;
-	skipipconfig = 0;
-	pidfile = NULL;
 	srand(time(NULL));
 
-	retval = 0;
 
 #ifdef WINDOWS32
 	WSAStartup(req_version, &wsa_data);
@@ -430,7 +416,7 @@ main(int argc, char **argv)
 	if (argc != 2)
 		usage();
 
-	netsize = strchr(argv[0], '/');
+	char *netsize = strchr(argv[0], '/');
 	if (netsize) {
 		*netsize = 0;
 		netsize++;
