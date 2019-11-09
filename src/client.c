@@ -304,11 +304,15 @@ send_query(uint8_t *encdata, size_t encdatalen)
 
 	if (!dns_encode(packet, &len, q, this.use_edns0)) {
 		warnx("dns_encode doesn't fit");
+		dns_packet_destroy(q);
 		return -1;
 	}
 
 	DEBUG(3, "TX: id %5d len %" L "u: hostname '%s'", q->id, encdatalen,
 			format_host(q->q[0].name, q->q[0].namelen, 0));
+
+	uint16_t query_id = q->id;
+	dns_packet_destroy(q);
 
 	sendto(this.dns_fd, packet, len, 0,
 			(struct sockaddr*)&this.nameserv_addrs[this.current_nameserver].addr,
@@ -354,7 +358,7 @@ send_query(uint8_t *encdata, size_t encdatalen)
 			update_server_timeout(1);
 		}
 	}
-	return q->id;
+	return query_id;
 }
 
 static void
@@ -502,7 +506,7 @@ send_next_frag()
 }
 
 static void
-write_dns_error(struct dns_packet *q, int ignore_some_errors)
+write_dns_error(uint16_t rcode, int ignore_some_errors)
 /* This is called from:
    1. handshake_waitdns() when already checked that reply fits to our
       latest query.
@@ -512,19 +516,18 @@ write_dns_error(struct dns_packet *q, int ignore_some_errors)
 */
 {
 	static size_t errorcounts[24] = {0};
-	if (!q) return;
 
-	if (q->rcode < 24) {
-		errorcounts[q->rcode]++;
-		if (errorcounts[q->rcode] == 20) {
+	if (rcode < 24) {
+		errorcounts[rcode]++;
+		if (errorcounts[rcode] == 20) {
 			warnx("Too many error replies, not logging any more.");
 			return;
-		} else if (errorcounts[q->rcode] > 20) {
+		} else if (errorcounts[rcode] > 20) {
 			return;
 		}
 	}
 
-	switch (q->rcode) {
+	switch (rcode) {
 	case NOERROR:	/* 0 */
 		if (!ignore_some_errors)
 			warnx("Got reply without error, but also without question and/or answer");
@@ -546,7 +549,7 @@ write_dns_error(struct dns_packet *q, int ignore_some_errors)
 		warnx("Got REFUSED as reply");
 		break;
 	default:
-		warnx("Got RCODE %u as reply", q->rcode);
+		warnx("Got RCODE %u as reply", rcode);
 		break;
 	}
 }
@@ -647,7 +650,6 @@ handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int 
    so effective timeout may be longer than specified.
 */
 {
-	struct dns_packet *q;
 	struct pkt_metadata m;
 	int r;
 	fd_set fds;
@@ -678,6 +680,7 @@ handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int 
 			return -1;	/* read error */
 		}
 
+		struct dns_packet *q;
 		if ((q = dns_decode(pkt, pktlen)) == NULL) {
 			DEBUG(1, "got invalid DNS packet as reply, cmd '%c'", cmd);
 			return -1;	/* invalid DNS packet */
@@ -696,6 +699,7 @@ handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int 
 			fprintf(stderr, "Got empty reply. This nameserver may not be resolving recursively, use another.\n");
 			char *td = format_host(this.topdomain, HOSTLEN(this.topdomain), 0);
 			fprintf(stderr, "Try \"iodine [options] %s ns.%s\" first, it might just work.\n", td, td);
+			dns_packet_destroy(q);
 			return -2;
 		}
 
@@ -705,6 +709,7 @@ handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int 
 		qcmd = toupper(q->q[0].name[1]);
 		if (r && ansdatalen && (q->id != this.lastid || qcmd != toupper(cmd))) {
 			DEBUG(1, "Ignoring unfitting reply id %hu starting with '%c'", q->id, qcmd);
+			dns_packet_destroy(q);
 			continue;
 		} else if (q->rcode != NOERROR) {
 			/* If we get an immediate SERVFAIL on the handshake query
@@ -717,9 +722,12 @@ handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int 
 			   is the only option that works. */
 			if (q->rcode == SERVFAIL)
 				sleep(1);
-			write_dns_error(q, 1);
-				return -2;
-		} /* if still here: reply matches our latest query */
+			write_dns_error(q->rcode, 1);
+			dns_packet_destroy(q);
+			return -2;
+		}
+		/* if still here: reply matches our latest query, and we don't need the original query any more */
+		dns_packet_destroy(q);
 
 		/* version commands have old format, so treat these differently */
 		if (cmd == 'V') {
@@ -934,8 +942,16 @@ tunnel_dns()
 				DNS_CLEANUP;
 				return;	/* nothing done */
 			}
-			write_dns_error(q, 0);
+			write_dns_error(q->rcode, 0);
 			if (q->rcode == SERVFAIL) { /* Maybe SERVFAIL etc */
+				/* TODO: If we get an immediate SERVFAIL on the handshake query
+				   we're waiting for, wait a while before sending the next.
+				   SERVFAIL reliably happens during fragsize autoprobe, but
+				   mostly long after we've moved along to some other queries.
+				   However, some DNS relays, once they throw a SERVFAIL, will
+				   for several seconds apply it immediately to _any_ new query
+				   for the same this.topdomain. When this happens, waiting a while
+				   is the only option that works. */
 				handle_data_servfail();
 			}
 			DNS_CLEANUP;
