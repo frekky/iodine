@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015 Frekk van Blagh <frekk@frekkworks.com>
+ * Copyright (c) 2015-2019 Frekk van Blagh <frekk@frekkworks.com>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -30,37 +30,36 @@
 
 typedef struct fragment {
 	uint8_t *data;				/* pointer to fragment data */
-	struct timeval lastsent;	/* timestamp of most recent send attempt */
 	size_t len;					/* Length of fragment data (0 if fragment unused) */
 	unsigned seqID;				/* fragment sequence ID */
-	unsigned retries;			/* number of times has been sent or dupes recv'd */
-	int acks;					/* number of times packet has been ack'd */
-	int ack_other;				/* other way ACK seqID (>=0) or unset (<0) */
-	uint8_t compressed;			/* compression flag */
-	uint8_t start;				/* start of chunk flag */
-	uint8_t end;				/* end of chunk flag */
+
+	/* flags */
+	uint8_t compressed;			/* fragment contains compressed data */
+	uint8_t start;				/* is start of chunk */
+	uint8_t end;				/* is end of chunk */
 } fragment;
 
 struct frag_buffer {
+	/* Generic ring-buffer stuff */
 	fragment *frags;		/* pointer to array of fragment metadata */
 	uint8_t *data;			/* pointer to actual fragment data */
 	size_t length;			/* Length of buffer */
 	size_t numitems;		/* number of non-empty fragments stored in buffer */
 	size_t window_start;	/* Start of window (index) */
-	size_t last_write;		/* Last fragment appended (index) */
-	size_t chunk_start;		/* index of oldest fragment slot (lowest seqID) in buffer */
-	struct timeval timeout;	/* Fragment ACK timeout before resend or drop */
-	unsigned windowsize;	/* Max number of fragments in flight */
-	unsigned maxfraglen;	/* Max outgoing fragment data size */
-	unsigned cur_seq_id;	/* Next unused sequence ID */
-	unsigned start_seq_id;	/* lowest seqID that exists in buffer (at index chunk_start) */
-	unsigned max_retries;	/* max number of resends before dropping */
-	unsigned resends;		/* number of fragments resent or number of dupes received */
-	unsigned oos;			/* Number of out-of-sequence fragments received */
 	int direction;			/* WINDOW_SENDING or WINDOW_RECVING */
-};
 
-extern int window_debug;
+	/* State variables for WINDOW_RECVING (reassembly) */
+	size_t chunk_start;		/* oldest fragment slot (lowest seqID) in buffer (index) */
+	unsigned maxfraglen;	/* Max outgoing fragment data size */
+	unsigned start_seq_id;	/* lowest seqID that exists in buffer (at index chunk_start) */
+	unsigned oos;			/* Number of out-of-sequence fragments received */
+
+	/* State variables for WINDOW_SENDING */
+	size_t last_write;		/* Last fragment appended (index) */
+	unsigned cur_seq_id;	/* Next unused sequence ID */
+
+	unsigned windowsize;	/* Max number of fragments in flight [DEPRECATED: this is handled at the DNS query/answer cache level] */
+};
 
 /* Window debugging macro */
 #ifdef DEBUG_BUILD
@@ -75,31 +74,11 @@ extern int window_debug;
 #define WDEBUG(...)
 #endif
 
-/* Gets pointer to fragment data given fragment index */
-#define FRAG_DATA(w, fragIndex) ((w->data + (w->maxfraglen * fragIndex)))
-
 /* Gets index of fragment o fragments after window start */
 #define AFTER(w, o) ((w->window_start + o) % w->length)
 
 /* Gets seqID of fragment o fragments after window start seqID */
 #define AFTERSEQ(w, o) ((w->start_seq_id + o) % MAX_SEQ_ID)
-
-/* Distance (going forwards) between a and b in window of length l */
-#define DISTF(l, a, b) ((a <= b) ? b-a : l-a+b)
-
-/* Distance backwards between a and b in window of length l */
-#define DISTB(l, a, b) (l-DISTF(l, a, b))
-
-/* Check if fragment index a is within window_buffer *w */
-#define INWINDOW_INDEX(w, a) ((w->window_start < w->window_end) ? \
-		(a >= w->window_start && a < w->window_end) : \
-		((a >= w->window_start && a < w->length) || \
-		(a >= 0 && a < w->window_end)))
-
-/* Check if sequence ID a is within sequence range start to end */
-#define INWINDOW_SEQ(start, end, a) ((start < end) ? \
-		(a >= start && a < end) : \
-		((a >= start && a < MAX_SEQ_ID) || (a < end)))
 
 /* Find the wrapped offset between sequence IDs start and a
  * Note: the maximum possible offset is MAX_SEQ_ID - 1 */
@@ -145,20 +124,8 @@ ssize_t window_process_incoming_fragment(struct frag_buffer *w, fragment *f);
  * Returns length of data reassembled, or 0 if no data reassembled */
 int window_reassemble_data(struct frag_buffer *w, uint8_t *data, size_t *maxlen, uint8_t *compression);
 
-/* Returns number of fragments to be sent */
-size_t window_sending(struct frag_buffer *w, struct timeval *);
-
-/* Returns next fragment to be sent or NULL if nothing (SEND) */
-fragment *window_get_next_sending_fragment(struct frag_buffer *w);
-
-/* Sets the fragment with seqid to be ACK'd (SEND) */
-void window_ack(struct frag_buffer *w, int seqid);
-
-void window_slide(struct frag_buffer *w, unsigned slide, int delete);
-
-/* To be called after all other processing has been done
- * when anything happens (moves window etc) (SEND/RECV) */
-void window_tick(struct frag_buffer *w);
+void window_mark_sent(struct frag_buffer *w, fragment *justsent);
+size_t window_to_send(struct frag_buffer *w, fragment **nextsend);
 
 /* Splits data into fragments and adds to the end of the window buffer for sending
  * All fragment meta-data is created here (SEND) */

@@ -53,8 +53,8 @@ START_TEST(test_window_everything)
 		}
 		fail_if(window_process_incoming_fragment(in, f) < 0, "Dropped fragment!");
 //		warnx("Received fragment with seqid %u, remaining space %lu.", f->seqID, window_buffer_available(in));
-		window_ack(out, f->seqID);
-		window_tick(out);
+		//window_ack(out, f->seqID);
+		//window_tick(out);
 	}
 //	warnx("Added %lu fragments, reassembling into data.", in->numitems);
 	uint8_t data[100];

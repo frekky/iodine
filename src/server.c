@@ -161,17 +161,17 @@ send_data_or_ping(int userid, struct dns_packet *q, int immediate)
    ping: 1=force send ping (even if data available), 0=only send if no data.
    immediate: 1=not from qmem (ie. fresh query), 0=query is from qmem */
 {
-	fragment *f = NULL;
+	fragment *f;
 	struct tun_user *u = &users[userid];
-	struct dns_packet *ans;
 
 	/* check if we have data, if not, send a ping instead */
-	if (!(f = window_get_next_sending_fragment(u->outgoing))) {
-		DEBUG(3, "no fragment to send -- replying with ping");
+	if (window_to_send(u->outgoing, &f) == 0) {
+		DEBUG(3, "user=%d no fragment to send -- replying with ping", userid);
 		return send_ping(userid, q, immediate);
 	}
 
-	uint8_t pkt[DOWNSTREAM_DATA_HDR + f->len], *p = pkt;
+	uint8_t pkt[DOWNSTREAM_DATA_HDR + f->len];
+	uint8_t *p = pkt;
 
 	/* build downstream data packet (see doc/proto_xxxxxxxx.txt) for details) */
 	/* Set data header flags: PI000KFS */
@@ -179,10 +179,11 @@ send_data_or_ping(int userid, struct dns_packet *q, int immediate)
 	*p++ = f->seqID & 0xFF;
 	putdata(&p, f->data, f->len);
 
-	/* generate answer for query */
-	ans = write_dns(q, userid, pkt, sizeof(pkt), u->downenc | DH_HMAC32);
+	/* send an answer for the query and save it to the cache */
+	struct dns_packet *ans = write_dns(q, userid, pkt, sizeof(pkt), u->downenc | DH_HMAC32);
 	qmem_answered(u->qmem, ans);
-	window_tick(u->outgoing);
+	window_mark_sent(u->outgoing, f); /* we are done with the fragment now */
+
 	return ans;
 }
 
@@ -1067,13 +1068,13 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 
 	/* Query timeout and window frag timeout */
 	readshort(unpacked, &p, &qtimeout_ms);
-	readshort(unpacked, &p, &wtimeout_ms);
+	readshort(unpacked, &p, &wtimeout_ms); /* XXX: deprecated */
 
 	uint8_t flags = *p++;
 
 	respond = flags & 1;
 	set_qtimeout = (flags >> 1) & 1;
-	set_wtimeout = (flags >> 2) & 1;
+	set_wtimeout = (flags >> 2) & 1; /* XXX: deprecated */
 
 	DEBUG(3, "PING pkt user %d, client CMC %u, down %d/%d, up %d/%d, %sqtime %u ms, "
 		  "%swtime %u ms, respond %d (flags %02X)",
@@ -1090,11 +1091,6 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 		if (newlazy != u->lazy)
 			DEBUG(2, "User %d: not changing lazymode to %d with timeout %u",
 				  userid, newlazy, qtimeout_ms);
-	}
-
-	if (set_wtimeout && u->outgoing) {
-		/* update sending window fragment ACK timeout */
-		u->outgoing->timeout = ms_to_timeval(wtimeout_ms);
 	}
 
 	if (u->qmem) {

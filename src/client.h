@@ -135,8 +135,8 @@ struct client_instance {
 	time_t send_interval_ms;
 	time_t min_send_interval_ms;
 	time_t server_timeout_ms;	/* Server response timeout in ms and downstream window timeout */
-	time_t downstream_timeout_ms;
-	double downstream_delay_variance;
+	time_t downstream_timeout_ms; /* deprecated */
+	double downstream_delay_variance; /* TODO: use delay variance for server_timeout */
 	time_t rtt_total_ms;	/* Cumulative Round-Trip-Time in ms */
 
 

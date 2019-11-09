@@ -102,8 +102,8 @@ immediate_mode_defaults()
 #ifdef DEBUG_BUILD
 #define QTRACK_DEBUG(l, ...) \
 	if (debug >= l) {\
-		TIMEPRINT("[QTRACK (%" L "u/%" L "u), ? %" L "u, TO %" L "u, S %" L "u/%" L "u] ", this.num_pending, PENDING_QUERIES_LENGTH, \
-				this.num_untracked, this.num_timeouts, window_sending(this.outbuf, NULL), this.outbuf->numitems); \
+		TIMEPRINT("[QTRACK (%zu/%zu), ? %zu, TO %zu, S %zu] ", this.num_pending, PENDING_QUERIES_LENGTH, \
+				this.num_untracked, this.num_timeouts, this.outbuf->numitems); \
 		fprintf(stderr, __VA_ARGS__);\
 		fprintf(stderr, "\n");\
 	}
@@ -147,7 +147,7 @@ update_server_timeout(int handshake)
 
 	/* update up/down window timeouts to something reasonable */
 	this.downstream_timeout_ms = rtt_ms * this.downstream_delay_variance;
-	this.outbuf->timeout = ms_to_timeval(this.downstream_timeout_ms);
+	// TODO: update server_timeout based on variance
 
 	if (handshake) {
 		/* Send ping handshake to set server timeout */
@@ -454,9 +454,9 @@ send_next_frag()
 	size_t buflen, hmaclen = 4;
 
 	/* Get next fragment to send */
-	f = window_get_next_sending_fragment(this.outbuf);
-	if (!f) {
-		return; /* nothing to send */
+	if (window_to_send(this.outbuf, &f) == 0) {
+		DEBUG(4, "no fragments to send right now");
+		return;
 	}
 
 	/* upstream data flags (00000CFL) */
@@ -490,15 +490,13 @@ send_next_frag()
 	size_t enclen = get_encoder(this.enc_up)->encode(buf + 1, &buflen, hmacbuf + 5, sizeof(hmacbuf) - 5);
 
 	DEBUG(3, " SEND DATA: seq %d, len %" L "u, s%d e%d c%d flags %02X hmac=%s",
-			f->seqID, f->len, f->start, f->end, f->compressed, flags,
-			tohexstr(hmac, hmaclen, 0));
-
+			f->seqID, f->len, f->start, f->end, f->compressed, flags, tohexstr(hmac, hmaclen, 0));
 	DEBUG(6, "    hmacbuf: len=%" L "u, %s", sizeof(hmacbuf), tohexstr(hmacbuf, sizeof(hmacbuf), 0));
 
 	id = send_query(buf, enclen + 1);
 	/* Log query ID as being sent now */
 	query_sent_now(id);
-	window_tick(this.outbuf);
+	window_mark_sent(this.outbuf, f);
 
 	this.num_frags_sent++;
 }
@@ -901,7 +899,7 @@ tunnel_dns()
 	struct dns_packet *q;
 	struct pkt_metadata m;
 	size_t datalen, buflen;
-	uint8_t buf[64*1024], cbuf[64*1024], *data, compressed;
+	uint8_t buf[64*1024], cbuf[64*1024];
 	fragment f;
 	int ping, immediate;
 	char cmd;
@@ -988,11 +986,6 @@ tunnel_dns()
 		return;
 	}
 
-	if (f.ack_other >= 0) {
-		window_ack(this.outbuf, f.ack_other);
-		window_tick(this.outbuf);
-	}
-
 	if (!ping) {
 		/* Downstream data traffic */
 		window_process_incoming_fragment(this.inbuf, &f);
@@ -1003,33 +996,31 @@ tunnel_dns()
 	/* Continue reassembling packets until not possible to do so.
 	 * This prevents a buildup of fully available packets (with one or more fragments each)
 	 * in the incoming window buffer. */
-	size_t pkt = 1;
-	while (pkt == 1) {
-		datalen = sizeof(cbuf);
-		pkt = window_reassemble_data(this.inbuf, cbuf, &datalen, &compressed);
-		if (datalen > 0) {
-			if (compressed) {
-				buflen = sizeof(buf);
-				if ((ping = uncompress(buf, &buflen, cbuf, datalen)) != Z_OK) {
-					DEBUG(1, "Uncompress failed (%d) for data len %" L "u: reassembled data corrupted or incomplete!", ping, datalen);
-					datalen = 0;
-				} else {
-					datalen = buflen;
-				}
-				data = buf;
-			} else {
-				data = cbuf;
-			}
+	uint8_t compressed;
+	size_t can_reassemble_more;
+	while (datalen = sizeof(cbuf), (can_reassemble_more =
+			window_reassemble_data(this.inbuf, cbuf, &datalen, &compressed))) {
+		uint8_t *data = cbuf;
 
-			if (datalen) {
-				if (this.use_remote_forward) {
-					if (write(STDOUT_FILENO, data, datalen) != datalen) {
-						warn("write_stdout != datalen");
-					}
-				} else {
-					write_tun(this.tun_fd, data, datalen);
-				}
+		/* try to decompress the data if it is compressed */
+		if (compressed) {
+			buflen = sizeof(buf);
+			int ret = uncompress(buf, &buflen, cbuf, datalen);
+			if (ret != Z_OK) {
+				DEBUG(1, "Uncompress failed (%d) for datalen=%zu: reassembled data corrupted or incomplete!", ret, datalen);
+				continue;
+			} else {
+				datalen = buflen;
 			}
+			data = buf;
+		}
+
+		if (this.use_remote_forward) {
+			if (write(STDOUT_FILENO, data, datalen) != datalen) {
+				warn("write_stdout != datalen");
+			}
+		} else {
+			write_tun(this.tun_fd, data, datalen);
 		}
 	}
 }
@@ -1078,7 +1069,7 @@ client_tunnel()
 		if (this.conn == CONN_DNS_NULL && !use_min_send) {
 
 			/* Send a single query per loop */
-			sending = window_sending(this.outbuf, &nextresend);
+			sending = window_to_send(this.outbuf, NULL);
 			total = sending;
 			check_pending_queries();
 			if (this.num_pending < this.windowsize_down && this.lazymode)
@@ -1143,8 +1134,8 @@ client_tunnel()
 				fprintf(stderr, " Queries immediate: %5" L "u, timed out: %4" L "u    target: %4" L "d ms\n",
 						this.num_immediate, this.num_timeouts, this.max_timeout_ms);
 				if (this.conn == CONN_DNS_NULL) {
-					fprintf(stderr, " Frags resent: %4u,   OOS: %4u          down frag: %4" L "d ms\n",
-							this.outbuf->resends, this.inbuf->oos, this.downstream_timeout_ms);
+					fprintf(stderr, " Out of sequence frags: %4u          down frag: %4" L "d ms\n",
+							 this.inbuf->oos, this.downstream_timeout_ms);
 					fprintf(stderr, " TX fragments: %8" L "u" ",   RX: %8" L "u" ",   pings: %8" L "u" "\n",
 							this.num_frags_sent, this.num_frags_recv, this.num_pings);
 				}
@@ -2083,7 +2074,6 @@ client_handshake()
 
 	/* init windowing protocol */
 	this.outbuf = window_buffer_init(WINDOW_BUFFER_LENGTH, (0 == this.windowsize_up ? 1 : this.windowsize_up), this.maxfragsize_up, WINDOW_SENDING);
-	this.outbuf->timeout = ms_to_timeval(this.downstream_timeout_ms);
 	/* Incoming buffer max fragsize doesn't matter */
 	this.inbuf = window_buffer_init(WINDOW_BUFFER_LENGTH, this.windowsize_down, MAX_FRAGSIZE_DOWN, WINDOW_RECVING);
 
