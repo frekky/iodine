@@ -142,10 +142,10 @@ send_ping(int userid, struct dns_packet *q, int immediate)
 	*p++ = (1 << 7) | ((immediate & 1) << 6);
 
 	putlong(&p, u->cmc_up);
-	*p++ = u->incoming->windowsize & 0xFF;
-	*p++ = u->outgoing->windowsize & 0xFF;
-	*p++ = u->incoming->start_seq_id & 0xFF;
-	*p++ = u->outgoing->start_seq_id & 0xFF;
+	*p++ = u->incoming->length & 0xFF;
+	*p++ = u->outgoing->length & 0xFF;
+	*p++ = u->incoming->window_start_seq & 0xFF;
+	*p++ = u->outgoing->window_start_seq & 0xFF;
 
 	/* generate answer for query */
 	ans = write_dns(q, userid, pkt, sizeof(pkt), u->downenc);
@@ -1012,8 +1012,8 @@ handle_dns_set_options(struct dns_packet *q, int userid, uint8_t *data, size_t l
 		if (u->tuntype == USER_CONN_NONE) {
 			/* we can now initialise qmem and send/recv buffers */
 			u->qmem = qmem_init(QMEM_LEN);
-			u->incoming = window_buffer_init(WINDOW_BUFFER_LENGTH, 8, MAX_FRAGSIZE_UP, WINDOW_RECVING);
-			u->outgoing = window_buffer_init(WINDOW_BUFFER_LENGTH, 8, u->fragsize, WINDOW_SENDING);
+			u->incoming = window_buffer_init(WINDOW_BUFFER_LENGTH, MAX_FRAGSIZE_UP, WINDOW_RECVING);
+			u->outgoing = window_buffer_init(WINDOW_BUFFER_LENGTH, u->fragsize, WINDOW_SENDING);
 		} else if (u->fragsize != dnfragsize) {
 			/* resize only, if necessary */
 			u->fragsize = dnfragsize;
@@ -1106,10 +1106,9 @@ handle_dns_ping(struct dns_packet *q, int userid, uint8_t *unpacked, size_t read
 		/* ping handshake - set windowsizes etc, respond NOW using this query
 		 * NOTE: still added to qmem (for cache) even though responded to immediately */
 		if (u->outgoing && u->incoming) {
-			DEBUG(2, "PING HANDSHAKE set windowsizes (old/new) up: %d/%d, dn: %d/%d",
-				  u->outgoing->windowsize, dn_winsize, u->incoming->windowsize, up_winsize);
-			u->outgoing->windowsize = dn_winsize;
-			u->incoming->windowsize = up_winsize;
+			DEBUG(2, "PING HANDSHAKE set max_queries up=%d, down=%d", up_winsize, dn_winsize);
+			// TODO what does dn_winsize actually mean nowadays?
+			u->max_queries = up_winsize;
 		}
 		DEBUG(3, "sending ping in response to ping: respond=%d, u->tuntype=%d", respond, u->tuntype);
 		return send_ping(userid, q, 1);

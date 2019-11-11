@@ -213,7 +213,7 @@ print_usage()
 	extern char *__progname;
 
 	fprintf(stderr, "Usage: %s [-v] [-h] [-Y preset] [-V sec] [-X port] [-f] [-r] [-u user] [-t chrootdir] [-d device] "
-			"[-w downfrags] [-W upfrags] [-i sec -j sec] [-I sec] [-J var] [-c 0|1] [-C 0|1] [-s ms] "
+			"[-Q numqueries] [-i sec -j sec] [-I sec] [-J var] [-c 0|1] [-C 0|1] [-s ms] "
 			"[-P password] [-m maxfragsize] [-M maxlen] [-T type] [-O enc] [-L 0|1] [-R port[,host] ] "
 			"[-z context] [-F pidfile] topdomain [nameserver1 [nameserver2 [...]]]\n", __progname);
 }
@@ -257,8 +257,7 @@ help()
 	fprintf(stderr, "  -P  password used for authentication (max 32 chars will be used)\n\n");
 
 	fprintf(stderr, "Fine-tuning options:\n");
-	fprintf(stderr, "  -w  downstream fragment window size (default: 8 frags)\n");
-	fprintf(stderr, "  -W  upstream fragment window size (default: 8 frags)\n");
+	fprintf(stderr, "  -Q  maximum number of queries to be send at a time\n");
 	fprintf(stderr, "  -k  max retries for sending packets (default: 0, retries disabled)\n");
 	fprintf(stderr, "  -i  server-side request timeout in lazy mode (default: auto)\n");
 	fprintf(stderr, "  -j  downstream fragment ACK timeout, implies -i4 (default: 2 sec)\n");
@@ -422,7 +421,7 @@ main(int argc, char **argv)
 	 * This is so that all options override preset values regardless of order in command line */
 	int optind_orig = optind, preset_id = -1;
 
-	static char *iodine_args_short = "46vfDhrY:s:V:c:C:i:j:J:u:t:d:R:P:w:W:m:M:F:T:N:O:L:I:k:";
+	static char *iodine_args_short = "46vfDhrY:s:V:c:C:i:j:J:u:t:d:R:P:Q:m:M:F:T:N:O:L:I:k:";
 
 	while ((choice = getopt_long(argc, argv, iodine_args_short, iodine_args, NULL))) {
 		/* Check if preset has been found yet so we don't process any other options */
@@ -594,11 +593,10 @@ main(int argc, char **argv)
 			if (this.send_interval_ms < 0)
 				this.send_interval_ms = 0;
 			break;
-		case 'w':
+		case 'Q':
+			// TODO: refactor for max queries option to do what it says
 			this.windowsize_down = atoi(optarg);
-			break;
-		case 'W':
-			this.windowsize_up = atoi(optarg);
+			this.windowsize_up = this.windowsize_down;
 			break;
 		case 'c':
 			this.compression_down = atoi(optarg) & 1;

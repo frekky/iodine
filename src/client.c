@@ -409,10 +409,10 @@ send_ping(int ping_response, int set_timeout)
 
 		/* Build ping header (see doc/proto_xxxxxxxx.txt) */
 		if (this.outbuf && this.inbuf) {
-			*p++ = this.outbuf->windowsize & 0xff;	/* Upstream window size */
-			*p++ = this.inbuf->windowsize & 0xff;	/* Downstream window size */
-			*p++ = this.outbuf->start_seq_id & 0xff;	/* Upstream window start */
-			*p++ = this.inbuf->start_seq_id & 0xff;	/* Downstream window start */
+			*p++ = this.windowsize_up & 0xff;	/* Upstream window size */
+			*p++ = this.windowsize_down & 0xff;	/* Downstream window size */
+			*p++ = this.outbuf->window_start_seq & 0xff;	/* Upstream window start */
+			*p++ = this.inbuf->window_start_seq & 0xff;	/* Downstream window start */
 		} else {
 			putlong(&p, 0); /* prevent memory leak */
 		}
@@ -423,10 +423,10 @@ send_ping(int ping_response, int set_timeout)
 		/* flags byte: 00000WTR */
 		*p++ = (set_timeout ? (3 << 1) : 0) | (ping_response & 1);
 
-		DEBUG(3, " SEND PING: respond %d, %s(server %ld ms, downfrag %ld ms), flags 0x%02x, wup %u, wdn %u",
+		DEBUG(3, " SEND PING: respond %d, %s(server %ld ms, downfrag %ld ms), flags 0x%02x, wup %zu, wdn %zu",
 				ping_response, set_timeout ? "SET " : "",
 				this.server_timeout_ms, this.downstream_timeout_ms,
-				data[8], this.outbuf->windowsize, this.inbuf->windowsize);
+				data[8], this.windowsize_up, this.windowsize_down);
 
 		id = send_packet('p', data, sizeof(data), 12);
 
@@ -2083,9 +2083,10 @@ client_handshake()
 	}
 
 	/* init windowing protocol */
-	this.outbuf = window_buffer_init(WINDOW_BUFFER_LENGTH, (0 == this.windowsize_up ? 1 : this.windowsize_up), this.maxfragsize_up, WINDOW_SENDING);
+	// TODO: calculate window buffer length based on windowsize
+	this.outbuf = window_buffer_init(WINDOW_BUFFER_LENGTH, this.maxfragsize_up, WINDOW_SENDING);
 	/* Incoming buffer max fragsize doesn't matter */
-	this.inbuf = window_buffer_init(WINDOW_BUFFER_LENGTH, this.windowsize_down, MAX_FRAGSIZE_DOWN, WINDOW_RECVING);
+	this.inbuf = window_buffer_init(WINDOW_BUFFER_LENGTH, MAX_FRAGSIZE_DOWN, WINDOW_RECVING);
 
 	/* init query tracking */
 	this.num_untracked = 0;

@@ -42,35 +42,28 @@ typedef struct fragment {
 struct frag_buffer {
 	/* Generic ring-buffer stuff */
 	fragment *frags;		/* pointer to array of fragment metadata */
-	uint8_t *data;			/* pointer to actual fragment data */
 	size_t length;			/* Length of buffer */
 	size_t numitems;		/* number of non-empty fragments stored in buffer */
 	size_t window_start;	/* Start of window (index) */
-	int direction;			/* WINDOW_SENDING or WINDOW_RECVING */
 
-	/* State variables for WINDOW_RECVING (reassembly) */
-	size_t chunk_start;		/* oldest fragment slot (lowest seqID) in buffer (index) */
-	unsigned maxfraglen;	/* Max outgoing fragment data size */
-	unsigned start_seq_id;	/* lowest seqID that exists in buffer (at index chunk_start) */
-	unsigned oos;			/* Number of out-of-sequence fragments received */
+	/* State variables relating to fragment metadata */
+	int direction;			/* WINDOW_SENDING or WINDOW_RECVING */
+	unsigned window_start_seq;	/* sequence ID of the frag slot at index window_start */
+	uint8_t *data;			/* pointer to actual fragment data (allocated size is length * maxfraglen) */
+	size_t maxfraglen;		/* Max outgoing fragment data size */
 
 	/* State variables for WINDOW_SENDING */
-	size_t last_write;		/* Last fragment appended (index) */
-	unsigned cur_seq_id;	/* Next unused sequence ID */
+	size_t last_write;		/* Tail: last fragment appended (index) */
+	unsigned cur_seq_id;	/* Next unused sequence ID (tail + 1) */
 
-	unsigned windowsize;	/* Max number of fragments in flight [DEPRECATED: this is handled at the DNS query/answer cache level] */
+	/* Statistics */
+	unsigned oos;			/* Number of out-of-sequence fragments received */
 };
 
 /* Window debugging macro */
 #define WDEBUG(level, ...) _DEBUG_PRINT(level, \
-		DEBUG_PRINT("[W:%s %zu/%zu]", w->direction == WINDOW_SENDING ? "SEND" : "RECV", \
+		DEBUG_PRINT("[W:%s %zu/%zu] ", w->direction == WINDOW_SENDING ? "SEND" : "RECV", \
 			w->numitems, w->length), __VA_ARGS__);
-
-/* Gets index of fragment o fragments after window start */
-#define AFTER(w, o) ((w->window_start + o) % w->length)
-
-/* Gets seqID of fragment o fragments after window start seqID */
-#define AFTERSEQ(w, o) ((w->start_seq_id + o) % MAX_SEQ_ID)
 
 /* Find the wrapped offset between sequence IDs start and a
  * Note: the maximum possible offset is MAX_SEQ_ID - 1 */
@@ -83,22 +76,11 @@ struct frag_buffer {
 #define WRAPSEQ(x) ((x) % MAX_SEQ_ID)
 
 
-/* Perform wrapped iteration of statement with pos = (begin to end) wrapped at
- * max, executing statement f for every value of pos. */
-#define ITER_FORWARD(begin, end, max, pos, f) { \
-		if (end >= begin) \
-			for (pos = begin; pos < end && pos < max; pos++) {f}\
-		else {\
-			for (pos = begin; pos < max; pos++) {f}\
-			for (pos = 0; pos < end && pos < max; pos++) {f}\
-		}\
-	}
-
 /* Window buffer creation */
-struct frag_buffer *window_buffer_init(size_t length, unsigned windowsize, unsigned maxfraglen, int dir);
+struct frag_buffer *window_buffer_init(size_t length, size_t maxfraglen, int dir);
 
 /* Resize buffer, clear and reset stats and data */
-void window_buffer_resize(struct frag_buffer *w, size_t length, unsigned maxfraglen);
+void window_buffer_resize(struct frag_buffer *w, size_t length, size_t maxfraglen);
 
 /* Destroys window buffer instance */
 void window_buffer_destroy(struct frag_buffer *w);
@@ -110,7 +92,7 @@ void window_buffer_clear(struct frag_buffer *w);
 size_t window_buffer_available(struct frag_buffer *w);
 
 /* Handles fragment received from the sending side (RECV) */
-ssize_t window_process_incoming_fragment(struct frag_buffer *w, fragment *f);
+int window_process_incoming_fragment(struct frag_buffer *w, fragment *f);
 
 /* Reassembles first complete sequence of fragments into data. (RECV)
  * Returns length of data reassembled, or 0 if no data reassembled */
