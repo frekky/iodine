@@ -191,13 +191,14 @@ static void
 user_process_incoming_data(int userid)
 {
 	uint8_t pkt[65536];
-	size_t datalen;
-	uint8_t compressed = 0;
-	int can_reassemble = 1;
+	int can_reassemble_more = 1;
 
-	while (can_reassemble == 1) {
-		datalen = sizeof(pkt);
-		can_reassemble = window_reassemble_data(users[userid].incoming, pkt, &datalen, &compressed);
+	while (can_reassemble_more) {
+		size_t datalen = sizeof(pkt);
+		uint8_t compressed;
+		can_reassemble_more = window_reassemble_data(users[userid].incoming, pkt, &datalen, &compressed);
+		DEBUG(4, "Incoming data for user=%d, can_reassemble=%d, datalen=%zu, compressed=%hhu, last_pkt=%ld",
+				userid, can_reassemble_more, datalen, compressed, users[userid].last_pkt);
 
 		/* Update time info */
 		users[userid].last_pkt = time(NULL);
@@ -257,13 +258,16 @@ static void
 check_pending_queries(struct timeval *maxwait)
 /* checks all pending queries from all users and answers those which have timed out */
 {
-	struct dns_packet *tosend, *ans;
 	for (int userid = 0; userid < created_users; userid++) {
 		if (!user_active(userid) || users[userid].tuntype == USER_CONN_NONE)
 			continue;
+
+		struct dns_packet *tosend;
 		while (qmem_max_wait(users[userid].qmem, &tosend, maxwait)) {
-			ans = send_data_or_ping(userid, tosend, 0);
+			struct dns_packet *ans = send_data_or_ping(userid, tosend, 0);
 			send_dns(get_dns_fd(&server.dns_fds, &tosend->m.from), ans);
+			DEBUG(8, "ans->refcount=%zu, tosend->refcount=%zu, maxwait=%ldms",
+					ans->refcount, tosend->refcount, timeval_to_ms(maxwait));
 			dns_packet_destroy(ans);
 			dns_packet_destroy(tosend);
 		}

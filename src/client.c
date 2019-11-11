@@ -1012,11 +1012,13 @@ tunnel_dns()
 	/* Continue reassembling packets until not possible to do so.
 	 * This prevents a buildup of fully available packets (with one or more fragments each)
 	 * in the incoming window buffer. */
-	uint8_t compressed;
-	size_t can_reassemble_more;
-	while (datalen = sizeof(cbuf), (can_reassemble_more =
-			window_reassemble_data(this.inbuf, cbuf, &datalen, &compressed))) {
+
+	int can_reassemble_more = 1;
+	while (can_reassemble_more) {
+		uint8_t compressed;
 		uint8_t *data = cbuf;
+		datalen = sizeof(cbuf);
+		can_reassemble_more = window_reassemble_data(this.inbuf, cbuf, &datalen, &compressed);
 
 		/* try to decompress the data if it is compressed */
 		if (compressed) {
