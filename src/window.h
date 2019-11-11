@@ -62,17 +62,9 @@ struct frag_buffer {
 };
 
 /* Window debugging macro */
-#ifdef DEBUG_BUILD
-#define WDEBUG_LEVEL 2
-#define WDEBUG(...) \
-	if (debug >= WDEBUG_LEVEL) {\
-		TIMEPRINT("[WDEBUG:%s] (%s:%d) ", w->direction == WINDOW_SENDING ? "S" : "R", __FILE__, __LINE__);\
-		fprintf(stderr, __VA_ARGS__);\
-		fprintf(stderr, "\n");\
-	}
-#else
-#define WDEBUG(...)
-#endif
+#define WDEBUG(level, ...) _DEBUG_PRINT(level, \
+		DEBUG_PRINT("[W:%s %zu/%zu]", w->direction == WINDOW_SENDING ? "SEND" : "RECV", \
+			w->numitems, w->length), __VA_ARGS__);
 
 /* Gets index of fragment o fragments after window start */
 #define AFTER(w, o) ((w->window_start + o) % w->length)

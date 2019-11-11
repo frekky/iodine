@@ -99,17 +99,9 @@ immediate_mode_defaults()
 /* Client-side query tracking for lazy mode */
 
 /* Handy macro for printing this.stats with messages */
-#ifdef DEBUG_BUILD
-#define QTRACK_DEBUG(l, ...) \
-	if (debug >= l) {\
-		TIMEPRINT("[QTRACK (%zu/%zu), ? %zu, TO %zu, S %zu] ", this.num_pending, PENDING_QUERIES_LENGTH, \
-				this.num_untracked, this.num_timeouts, this.outbuf->numitems); \
-		fprintf(stderr, __VA_ARGS__);\
-		fprintf(stderr, "\n");\
-	}
-#else
-#define QTRACK_DEBUG(...)
-#endif
+#define QTRACK_DEBUG(level, ...) \
+		_DEBUG_PRINT(level, DEBUG_PRINT("[QTRACK (%zu/%zu), ? %zu, TO %zu, S %zu] ", this.num_pending, PENDING_QUERIES_LENGTH, \
+			this.num_untracked, this.num_timeouts, this.outbuf->numitems), __VA_ARGS__)
 
 static int
 update_server_timeout(int handshake)
@@ -308,7 +300,7 @@ send_query(uint8_t *encdata, size_t encdatalen)
 		return -1;
 	}
 
-	DEBUG(3, "TX: id %5d len %" L "u: hostname '%s'", q->id, encdatalen,
+	DEBUG(3, "TX: id %5d len %zu: hostname '%s'", q->id, encdatalen,
 			format_host(q->q[0].name, q->q[0].namelen, 0));
 
 	uint16_t query_id = q->id;
@@ -493,9 +485,9 @@ send_next_frag()
 	buflen = sizeof(buf) - 1; /* userid char */
 	size_t enclen = get_encoder(this.enc_up)->encode(buf + 1, &buflen, hmacbuf + 5, sizeof(hmacbuf) - 5);
 
-	DEBUG(3, " SEND DATA: seq %d, len %" L "u, s%d e%d c%d flags %02X hmac=%s",
+	DEBUG(3, " SEND DATA: seq %d, len %zu, s%d e%d c%d flags %02X hmac=%s",
 			f->seqID, f->len, f->start, f->end, f->compressed, flags, tohexstr(hmac, hmaclen, 0));
-	DEBUG(6, "    hmacbuf: len=%" L "u, %s", sizeof(hmacbuf), tohexstr(hmacbuf, sizeof(hmacbuf), 0));
+	DEBUG(6, "    hmacbuf: len=%zu, %s", sizeof(hmacbuf), tohexstr(hmacbuf, sizeof(hmacbuf), 0));
 
 	id = send_query(buf, enclen + 1);
 	/* Log query ID as being sent now */
@@ -615,7 +607,7 @@ raw_validate(uint8_t **packet, size_t len, uint8_t *cmd)
 	memset(hmac_pkt, 0, sizeof(hmac_pkt));
 	memcpy(hmac_pkt, *packet + RAW_HDR_HMAC, RAW_HDR_HMAC_LEN);
 
-	DEBUG(2, "RX-raw: user %d, raw command 0x%02X, length %" L "u", userid, *cmd, len);
+	DEBUG(2, "RX-raw: user %d, raw command 0x%02X, length %zu", userid, *cmd, len);
 
 	*packet += RAW_HDR_LEN;
 	len -= RAW_HDR_LEN;
@@ -686,7 +678,7 @@ handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int 
 			return -1;	/* invalid DNS packet */
 		}
 
-		DEBUG(2, "RX: id %5d len %" L "u: hostname '%s'", q->id, q->q[0].namelen,
+		DEBUG(2, "RX: id %5d len %zu: hostname '%s'", q->id, q->q[0].namelen,
 				format_host(q->q[0].name, q->q[0].namelen, 0));
 
 		/* Non-recursive DNS servers (such as [a-m].root-servers.net)
@@ -799,7 +791,7 @@ parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int *ping)
 		f->start = (flags >> 1) & 1;
 		f->compressed = (flags >> 2) & 1;
 		f->len = len - (p - data);
-		DEBUG(2, " RX DATA frag ID %3u, compression %d, fraglen %" L "u, s%d e%d\n",
+		DEBUG(2, " RX DATA frag ID %3u, compression %d, fraglen %zu, s%d e%d\n",
 				f->seqID, f->compressed, f->len, f->start, f->end);
 		if (f->len > 0) {
 			memcpy(f->data, p, MIN(f->len, this.inbuf->maxfraglen));
@@ -843,7 +835,7 @@ tunnel_stdin()
 	if (this.conn == CONN_DNS_NULL) {
 		/* Check if outgoing buffer can hold data */
 		if (window_buffer_available(this.outbuf) < (datalen / this.outbuf->maxfraglen) + 1) {
-			DEBUG(1, "  Outgoing buffer full (%" L "u/%" L "u), not adding data!",
+			DEBUG(1, "  Outgoing buffer full (%zu/%zu), not adding data!",
 						this.outbuf->numitems, this.outbuf->length);
 			return -1;
 		}
@@ -869,7 +861,7 @@ tunnel_tun()
 	if ((read = read_tun(this.tun_fd, in, sizeof(in))) <= 0)
 		return -1;
 
-	DEBUG(2, " IN: %" L "u bytes on tunnel, to be compressed: %d", read, this.compression_up);
+	DEBUG(2, " IN: %zu bytes on tunnel, to be compressed: %d", read, this.compression_up);
 
 	if (this.conn != CONN_DNS_NULL || this.compression_up) {
 		datalen = sizeof(out);
@@ -884,7 +876,7 @@ tunnel_tun()
 		/* Check if outgoing buffer can hold data */
 		if ((this.windowsize_up == 0 && this.outbuf->numitems != 0) ||
 				window_buffer_available(this.outbuf) < (read / this.outbuf->maxfraglen) + 1) {
-			DEBUG(1, "  Outgoing buffer full (%" L "u/%" L "u), not adding data!",
+			DEBUG(1, "  Outgoing buffer full (%zu/%zu), not adding data!",
 						this.outbuf->numitems, this.outbuf->length);
 			return -1;
 		}
@@ -925,7 +917,7 @@ tunnel_dns()
 		if ((q = dns_decode(buf, buflen)) == NULL)
 			return;
 
-		DEBUG(2, "RX: id %5d len=%" L "u name='%s'", q->id, q->q[0].namelen, format_host(q->q[0].name, q->q[0].namelen, 0));
+		DEBUG(2, "RX: id %5d len=%zu name='%s'", q->id, q->q[0].namelen, format_host(q->q[0].name, q->q[0].namelen, 0));
 		memcpy(&q->m, &m, sizeof(m));
 
 		datalen = sizeof(buf);
@@ -1095,7 +1087,7 @@ client_tunnel()
 			else if (this.num_pending < 1 && !this.lazymode)
 				total = MAX(total, 1);
 
-			QTRACK_DEBUG(2, "sending=%d, total=%d, next_ack=%d, outbuf.n=%" L "u",
+			QTRACK_DEBUG(2, "sending=%d, total=%d, next_ack=%d, outbuf.n=%zu",
 					sending, total, this.next_downstream_ack, this.outbuf->numitems);
 			/* Upstream traffic - this is where all ping/data queries are sent */
 			if (sending > 0 || total > 0) {
@@ -1111,7 +1103,7 @@ client_tunnel()
 
 				sending--;
 				total--;
-				QTRACK_DEBUG(3, "Sent a query to fill server lazy buffer to %" L "u, will send another %d",
+				QTRACK_DEBUG(3, "Sent a query to fill server lazy buffer to %zu, will send another %d",
 							 this.lazymode ? this.windowsize_down : 1, total);
 
 				if (sending > 0 || (total > 0 && this.lazymode)) {
@@ -1352,7 +1344,7 @@ send_server_options(uint8_t *flags)
 			putbyte(&p, 0x08);
 			putshort(&p, s->sin_port);
 		}
-		DEBUG(2, "Sending UDP forward request, length %" L "u, ss_family %hu",
+		DEBUG(2, "Sending UDP forward request, length %zu, ss_family %hu",
 				p - buf, this.remote_forward_addr.ss_family);
 	} else { /* request TUN IP */
 		DEBUG(2, "Requesting TUN IP");
@@ -1513,7 +1505,7 @@ handshake_raw_udp()
 			got_addr = 1;
 			break;
 		}
-		DEBUG(1, "got invalid external IP: datalen %" L "u, data[0]=0x%02x", len, in[0]);
+		DEBUG(1, "got invalid external IP: datalen %zu, data[0]=0x%02x", len, in[0]);
 	}
 	fprintf(stderr, "\n");
 	if (!this.running)
@@ -1573,7 +1565,7 @@ codectest_validate(uint8_t *test, size_t testlen, uint8_t *datar, size_t datarle
 {
 	if (datarlen != testlen) {
 		/* length mismatch: definitely unreliable */
-		fprintf(stderr, "Test data length mismatch (wanted %" L "u, got %" L "u), retrying...\n",
+		fprintf(stderr, "Test data length mismatch (wanted %zu, got %zu), retrying...\n",
 				testlen, datarlen);
 		return -2;
 	}
@@ -1617,7 +1609,7 @@ handshake_codectest(uint8_t *s, size_t slen, int dn, int tries, size_t testlen)
 	char *stream = dn ? "downstream" : "upstream";
 
 	if (testlen < 34) {
-		DEBUG(1, "tried to send codectest too short for header (%" L "u)", testlen);
+		DEBUG(1, "tried to send codectest too short for header (%zu)", testlen);
 		return -2;
 	}
 	testlen -= dn ? 33 : 34;
@@ -1650,7 +1642,7 @@ handshake_codectest(uint8_t *s, size_t slen, int dn, int tries, size_t testlen)
 		ulr = *p++;
 		readshort(in, &p, &drlen);
 
-		DEBUG(4, "RX codectest: flags=%hhx, ulr=%hhu, drlen=%" L "u (%hu), testlen=%" L "u",
+		DEBUG(4, "RX codectest: flags=%hhx, ulr=%hhu, drlen=%zu (%hu), testlen=%zu",
 				flags, ulr, inlen - 4, drlen, testlen);
 
 		if (dn) { /* downstream check: datar is repeated base32 decoded dataq */
@@ -1844,7 +1836,7 @@ handshake_switch_options()
 		uint8_t *p = in, inflags[2];
 		uint16_t dnfragsize;
 		if ((ret = handshake_waitdns(in, &len, 0, 'O', i + 1)) != 1) {
-			DEBUG(2, "\ngot options reply, ret=%d, len=%" L "u, dderr=%d", ret, len, downstream_decode_err);
+			DEBUG(2, "\ngot options reply, ret=%d, len=%zu, dderr=%d", ret, len, downstream_decode_err);
 			if (downstream_decode_err == (E_BADOPTS | DDERR_IS_ANS)) {
 				fprintf(stderr, "rejected by server!\n");
 				return 0;
@@ -1858,7 +1850,7 @@ handshake_switch_options()
 		readdata(&p, inflags, 2); /* check reply flags from server */
 		readshort(in, &p, &dnfragsize);
 		if (len < 4 || memcmp(flags, inflags, 2) != 0 || dnfragsize != this.maxfragsize_down) {
-			DEBUG(1, "\ninvalid reply len=%" L "u, flags: 0x%s, expected 0x%s",
+			DEBUG(1, "\ninvalid reply len=%zu, flags: 0x%s, expected 0x%s",
 					len, tohexstr(inflags, 2, 1), tohexstr(flags, 2, 0));
 			return 0;
 		} else if (this.use_remote_forward && len == 4) {
@@ -1887,7 +1879,7 @@ handshake_switch_options()
 			}
 		} else {
 			/* invalid reply, try again */
-			DEBUG(1, "\ninvalid options reply from server! len=%" L "u", len);
+			DEBUG(1, "\ninvalid options reply from server! len=%zu", len);
 		}
 		fprintf(stderr, ".");
 	}
@@ -1976,7 +1968,7 @@ handshake_set_timeout()
 	int ret, id;
 	size_t len;
 
-	fprintf(stderr, "Setting window sizes to %" L "u frags upstream, %" L "u frags downstream...\n",
+	fprintf(stderr, "Setting window sizes to %zu frags upstream, %zu frags downstream...\n",
 		this.windowsize_up, this.windowsize_down);
 
 	fprintf(stderr, "Calculating round-trip time...");

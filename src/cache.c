@@ -126,11 +126,11 @@ qmem_append(struct qmem_buffer *buf, struct dns_packet *q)
 		buf->start = (buf->start + 1) % buf->size;
 	}
 
-	QMEM_DEBUG(5, buf, "add query ID %d (addr=%p), replacing query addr=%p", q->id, (void *)q, (void *)buf->queries[buf->end]);
-
 	/* Copy query pointer into end of buffer */
-	buf->queries[buf->end] = q;
 	q->refcount++;
+	QMEM_DEBUG(5, buf, "add query ID %d (addr=%p, refcount=%zu), replacing query addr=%p",
+			q->id, (void *)q, q->refcount, (void *)buf->queries[buf->end]);
+	buf->queries[buf->end] = q;
 	buf->end = (buf->end + 1) % buf->size;
 	buf->num_pending += 1;
 }
@@ -178,15 +178,16 @@ qmem_max_wait(struct qmem_buffer *buf, struct dns_packet **sendq, struct timeval
 
 	gettimeofday(&now, NULL);
 
+	/* queries will always be in time order, so first in buf is oldest */
 	q = buf->queries[buf->start_pending];
 	if (sendq) {
 		*sendq = q;
 		q->refcount++;
-		QMEM_DEBUG(8, buf, "qmem_max_wait: next to timeout is queries[%zu], refcount=%zu", buf->start_pending, q->refcount);
 	}
 
-	/* queries will always be in time order, so first in buf is oldest */
 	timersub(&now, &q->m.time_recv, &age);
+	QMEM_DEBUG(8, buf, "next to timeout is queries[%zu], refcount=%zu, age=%ldms",
+			buf->start_pending, q->refcount, timeval_to_ms(&age));
 	if (!timercmp(&age, &buf->timeout, <)) {
 		/* return query to respond to when if timed out */
 		QMEM_DEBUG(3, buf, "TIMEOUT: ID %d, age=%ldms, timeout %ldms",

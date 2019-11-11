@@ -155,28 +155,47 @@ extern const unsigned char raw_header[RAW_HDR_LEN];
 #define DOWNSTREAM_PING_HDR	9
 #define UPSTREAM_DATA_HDR	2
 
-#define TIMEPRINT(...) \
+#define DEBUG_PRINT(...) fprintf(stderr, __VA_ARGS__);
+
+#define PRINT_TIMESTAMP \
 		struct timeval currenttime;\
 		gettimeofday(&currenttime, NULL);\
-		fprintf(stderr, "%03ld.%03ld ", (long) currenttime.tv_sec, (long) currenttime.tv_usec / 1000);\
-		fprintf(stderr, __VA_ARGS__);
+		DEBUG_PRINT("%03ld.%03ld ", (long) currenttime.tv_sec, (long) currenttime.tv_usec / 1000); \
+
+//#define DEBUG_BUILD
 
 /* handy debug printing macro */
 #ifdef DEBUG_BUILD
-#define DEBUG(level, ...) \
-		if (debug >= level) {\
-			TIMEPRINT("[D%d %s:%d] ", level, __FILE__, __LINE__); \
-			fprintf(stderr, __VA_ARGS__);\
-			fprintf(stderr, "\n");\
+#define IF_DEBUG(level, what_do) \
+		if (debug >= level) { \
+			what_do; \
 		}
+
+/* print the base debug print header (timestamp, debug level, function, file:line) */
+#define _DEBUG_PRINT(level, extra_header, ...) \
+		IF_DEBUG(level, \
+			PRINT_TIMESTAMP \
+			DEBUG_PRINT("[D%d %s %s:%d] ", level, __func__, __FILE__, __LINE__) \
+			extra_header \
+			DEBUG_PRINT(__VA_ARGS__) \
+			DEBUG_PRINT("\n") \
+		)
 #else
-#define DEBUG(level, ...) \
-		if (debug >= level && level >= 2) {\
-			fprintf(stderr, "[D%d] ", level); \
-			fprintf(stderr, __VA_ARGS__);\
-			fprintf(stderr, "\n");\
-		}
+/* for non-debug builds, the compiler will optimise out any debug prints more than level 2 */
+#define IF_DEBUG(level, what_do) if (level >= 2 && debug >= level) { what_do; }
+
+/* print some basic info as well as the message */
+#define _DEBUG_PRINT(level, extra_header, ...) \
+		IF_DEBUG(level, \
+			DEBUG_PRINT("[D%d:%s] ", level, __func__) \
+			extra_header \
+			DEBUG_PRINT(__VA_ARGS__) \
+			DEBUG_PRINT("\n") \
+		)
 #endif
+
+/* regular debug print macro */
+#define DEBUG(level, ...) _DEBUG_PRINT(level, , __VA_ARGS__)
 
 
 // TODO replace struct query with struct dns_packet

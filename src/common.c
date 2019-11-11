@@ -370,7 +370,7 @@ send_raw(int fd, uint8_t *buf, size_t buflen, int user, int cmd, uint32_t cmc,
 	hmac_md5(hmac, hmac_key, 16, packet, sizeof(packet));
 	memcpy(packet + RAW_HDR_HMAC, hmac, RAW_HDR_HMAC_LEN);
 
-	DEBUG(3, "TX-raw: client %s (user %d), cmd %d, %" L "u bytes",
+	DEBUG(3, "TX-raw: client %s (user %d), cmd %d, %zu bytes",
 			format_addr(to, tolen), user, cmd, sizeof(packet));
 
 	sendto(fd, packet, sizeof(packet), 0, (struct sockaddr *) to, tolen);

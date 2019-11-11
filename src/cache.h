@@ -22,12 +22,9 @@
 
 #define MAX_CACHESIZE 128
 
-#define QMEM_DEBUG(l, buf, ...) \
-	if (debug >= l) {\
-		TIMEPRINT("[QMEM %" L "u/%" L "u] ", buf->num_pending, buf->length); \
-		fprintf(stderr, __VA_ARGS__);\
-		fprintf(stderr, "\n");\
-	}
+/* debug print with extra info for QMEM */
+#define QMEM_DEBUG(level, buf, ...) \
+	_DEBUG_PRINT(level, DEBUG_PRINT("[QMEM %zu/%zu] ", buf->num_pending, buf->length), __VA_ARGS__)
 
 /* Struct used for QMEM + DNS cache */
 struct qmem_buffer {

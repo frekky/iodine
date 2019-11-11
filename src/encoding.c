@@ -162,7 +162,7 @@ downstream_encode(uint8_t *out, size_t *outlen, uint8_t *data, size_t datalen,
 	} else {
 		get_rand_bytes(hmac, sizeof(hmac));
 	}
-	DEBUG(5, "downstream_encode hmac=%s, hmaclen = %" L "u", tohexstr(hmac, hmaclen, 1), hmaclen);
+	DEBUG(5, "downstream_encode hmac=%s, hmaclen = %zu", tohexstr(hmac, hmaclen, 1), hmaclen);
 	DEBUG(6, "hmacbuf: len=%u, %s", len + 4, tohexstr(hmacbuf, len + 4, 0));
 	memcpy(hmacbuf + 9, hmac, hmaclen);
 
@@ -222,7 +222,7 @@ downstream_decode(uint8_t *out, size_t *outlen, uint8_t *encdata, size_t encdata
 
 	if (flags & DH_ERROR) {
 		downstream_decode_err = DDERR_IS_ANS;
-		DEBUG(1, "got DH_ERROR from server! code=%x (len=%" L "u)", flags & 7, encdatalen);
+		DEBUG(1, "got DH_ERROR from server! code=%x (len=%zu)", flags & 7, encdatalen);
 		/* always 96-bit HMAC when error flag is set */
 		error = flags & 7;
 		if (hmaclen == 4) {
@@ -261,7 +261,7 @@ downstream_decode(uint8_t *out, size_t *outlen, uint8_t *encdata, size_t encdata
 			downstream_decode_err = DDERR_BADHMAC;
 			goto _dderr;
 		} else {
-			DEBUG(5, "downstream_decode hmac=%s, hmaclen=%" L "u)", tohexstr(hmac, hmaclen, 1), hmaclen);
+			DEBUG(5, "downstream_decode hmac=%s, hmaclen=%zu)", tohexstr(hmac, hmaclen, 1), hmaclen);
 		}
 		DEBUG(6, "hmacbuf: len=%u, %s", len + 5, tohexstr(hmacbuf, len + 5, 0));
 	}

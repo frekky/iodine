@@ -113,7 +113,7 @@ START_TEST(test_decode_query)
 	fail_unless(dns_decode_data_query(q, topdomain, buf, &len), "decode failed!");
 
 	fail_unless(memcmp(buf, innerData, sizeof(innerData) - 1) == 0, "Did not extract expected host");
-	fail_unless(len == sizeof(innerData) - 1, "Bad host length: %" L "u, expected %u", len, sizeof(innerData) - 1);
+	fail_unless(len == sizeof(innerData) - 1, "Bad host length: %zu, expected %u", len, sizeof(innerData) - 1);
 }
 END_TEST
 
@@ -152,7 +152,7 @@ START_TEST(test_decode_response)
 	len = sizeof(buf);
 	fail_unless(dns_decode_data_answer(q, buf, &len));
 
-	fail_unless(len == sizeof(msgData) - 1, "Bad data length: %" L "u, expected %u", len, sizeof(msgData) - 1);
+	fail_unless(len == sizeof(msgData) - 1, "Bad data length: %zu, expected %u", len, sizeof(msgData) - 1);
 	fail_unless(memcmp(msgData, buf, sizeof(msgData) - 1) == 0, "Did not extract expected data");
 	fail_unless(q->id == 0x0539);
 }
@@ -171,7 +171,7 @@ START_TEST(test_decode_response_with_high_trans_id)
 	len = sizeof(buf);
 	fail_unless(dns_decode_data_answer(q, buf, &len));
 
-	fail_unless(len == sizeof(msgData) - 1, "Bad data length: %" L "u, expected %u", len, sizeof(msgData) - 1);
+	fail_unless(len == sizeof(msgData) - 1, "Bad data length: %zu, expected %u", len, sizeof(msgData) - 1);
 	fail_unless(memcmp(msgData, buf, sizeof(msgData) - 1) == 0, "Did not extract expected data");
 	fail_unless(q->id == 0x8539, "q.id was %08X instead of %08X!", q->id, 0x8539);
 }

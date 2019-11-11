@@ -231,7 +231,7 @@ user_send_data(int userid, uint8_t *indata, size_t len, int compressed)
 		datalen = sizeof(out);
 		ret = uncompress(out, &datalen, indata, len);
 		if (ret != Z_OK) {
-			DEBUG(1, "FAIL: Uncompress == %d: %" L "u bytes to user %d!", ret, len, userid);
+			DEBUG(1, "FAIL: Uncompress == %d: %zu bytes to user %d!", ret, len, userid);
 			return 0;
 		}
 	}
@@ -382,7 +382,7 @@ tunnel_dns(int dns_fd)
 	if ((q = dns_decode(pkt, pktlen)) == NULL)
 		return;
 
-	DEBUG(3, "RX: client %s ID %5d, pktlen %" L "u, type %d, name '%s'", format_addr(&m.from, m.fromlen),
+	DEBUG(3, "RX: client %s ID %5d, pktlen %zu, type %d, name '%s'", format_addr(&m.from, m.fromlen),
 			q->id, pktlen, q->q[0].type, format_host(q->q[0].name, q->q[0].namelen, 0));
 
 	memcpy(&q->m, &m, sizeof(m));
@@ -558,7 +558,7 @@ handle_full_packet(int userid, uint8_t *data, size_t len, int compressed)
 		if (users[userid].remoteforward_addr_len == 0) {
 			hdr = (struct ip*) (out + 4);
 			touser = find_user_by_ip(hdr->ip_dst.s_addr);
-			DEBUG(2, "FULL PKT: %" L "u bytes from user %d (touser %d)", len, userid, touser);
+			DEBUG(2, "FULL PKT: %zu bytes from user %d (touser %d)", len, userid, touser);
 			if (touser == -1) {
 				/* send the uncompressed packet to tun device */
 				write_tun(server.tun_fd, rawdata, rawlen);
@@ -578,7 +578,7 @@ handle_full_packet(int userid, uint8_t *data, size_t len, int compressed)
 		}
 
 	} else {
-		DEBUG(2, "Discarded pkt from user %d, uncompress()==%d, len=%" L "u, rawlen=%" L "u",
+		DEBUG(2, "Discarded pkt from user %d, uncompress()==%d, len=%zu, rawlen=%zu",
 				userid, ret, len, rawlen);
 	}
 }
@@ -588,11 +588,11 @@ handle_raw_login(uint8_t *packet, size_t len, struct pkt_metadata *m, int fd, in
 {
 	struct tun_user *u = &users[userid];
 	if (len < 16) {
-		DEBUG(2, "Invalid raw login packet: length %" L "u < 16 bytes!", len);
+		DEBUG(2, "Invalid raw login packet: length %zu < 16 bytes!", len);
 		return;
 	}
 
-	DEBUG(1, "RX-raw: login, len %" L "u, from user %d", len, userid);
+	DEBUG(1, "RX-raw: login, len %zu, from user %d", len, userid);
 
 	/* User is authenticated using HMAC (already verified) */
 	/* Update time info for user */
@@ -620,7 +620,7 @@ handle_raw_data(uint8_t *packet, size_t len, int userid)
 
 	/* copy to packet buffer, update length */
 
-	DEBUG(3, "RX-raw: full pkt raw, length %" L "u, from user %d", len, userid);
+	DEBUG(3, "RX-raw: full pkt raw, length %zu, from user %d", len, userid);
 
 	handle_full_packet(userid, packet, len, 1);
 }
@@ -660,7 +660,7 @@ raw_decode(uint8_t *packet, size_t len, struct pkt_metadata *m, int dns_fd)
 	memset(hmac_pkt, 0, sizeof(hmac_pkt));
 	memcpy(hmac_pkt, packet + RAW_HDR_HMAC, RAW_HDR_HMAC_LEN);
 
-	DEBUG(3, "RX-raw: client %s, user %d, raw command 0x%02X, length %" L "u",
+	DEBUG(3, "RX-raw: client %s, user %d, raw command 0x%02X, length %zu",
 			  format_addr(&m->from, m->fromlen), userid, raw_cmd, len);
 
 	if (!is_valid_user(userid)) {
@@ -716,7 +716,7 @@ send_dns(int fd, struct dns_packet *q)
 		return;
 	}
 
-	DEBUG(3, "TX: client %s ID %5d, dnslen %" L "u, type %hu, name '%10s'",
+	DEBUG(3, "TX: client %s ID %5d, dnslen %zu, type %hu, name '%10s'",
 			format_addr(&q->m.dest, q->m.destlen), q->id, len, q->q[0].type,
 			format_host(q->q[0].name, q->q[0].namelen, 0));
 
@@ -773,13 +773,13 @@ write_dns(struct dns_packet *q, int userid, uint8_t *data, size_t datalen, uint8
 
 	struct dns_packet *ans = dns_encode_data_answer(q, tmpbuf, len);
 	if (!ans)
-		DEBUG(1, "dns_encode doesn't fit, downstream_encode len=%" L "u", len);
+		DEBUG(1, "dns_encode doesn't fit, downstream_encode len=%zu", len);
 	return ans;
 }
 
 #define CHECK_LEN_U(l, x, u) \
 	if (l != x) { \
-		DEBUG(3, "BADLEN: expected %u, got %" L "u", x, l); \
+		DEBUG(3, "BADLEN: expected %u, got %zu", x, l); \
 		return write_dns(q, u, NULL, 0, DH_ERR(BADLEN)); \
 	}
 
@@ -1032,7 +1032,7 @@ handle_dns_set_options(struct dns_packet *q, int userid, uint8_t *data, size_t l
 		u->tuntype = newtuntype;
 		return write_dns(q, userid, out, o - out, WD_AUTO);
 	} else {
-		DEBUG(2, "bad connection options from user %d, len=%" L "u", userid, len);
+		DEBUG(2, "bad connection options from user %d, len=%zu", userid, len);
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADOPTS));
 	}
 
@@ -1130,7 +1130,7 @@ handle_dns_data(struct dns_packet *q, int userid, uint8_t *unpacked, size_t len)
 
 	/* Need 2 byte header + >=1 byte data */
 	if (len < UPSTREAM_DATA_HDR + 1) {
-		DEBUG(3, "BADLEN: expected upstream data pkt >3 bytes, got %" L "u bytes", len);
+		DEBUG(3, "BADLEN: expected upstream data pkt >3 bytes, got %zu bytes", len);
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADLEN));
 	}
 
@@ -1235,7 +1235,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 
 	/* get the cmd and change to uppercase for HMAC calculation */
 	cmd = encdata[0] = toupper(encdata[0]);
-	DEBUG(3, "NULL request encdatalen %" L "u, cmd '%c'", encdatalen, cmd);
+	DEBUG(3, "NULL request encdatalen %zu, cmd '%c'", encdatalen, cmd);
 
 	/* Pre-login commands: backwards compatible with protocol 00000402 */
 	if (cmd == 'V') { /* Version check - before userid is assigned */
@@ -1284,7 +1284,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 		pktlen = encdatalen - headerlen; /* pktlen is length of packet to decode */
 		minlen = hmaclen + 4; /* minimum raw decoded length of header */
 	}
-	DEBUG(7, "cmd='%c', upenc=%hhu, hmaclen=%" L "u, headerlen=%" L "u, pktlen=%" L "u, minlen=%" L "u",
+	DEBUG(7, "cmd='%c', upenc=%hhu, hmaclen=%zu, headerlen=%zu, pktlen=%zu, minlen=%zu",
 			cmd, enc, hmaclen, headerlen, pktlen, minlen);
 
 	/* Following commands have everything after cmd and userid encoded
@@ -1296,7 +1296,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 
 	const size_t raw_len = unpack_data(unpacked, unpacked_len, encdata + headerlen, pktlen, enc);
 	if (raw_len < minlen) {
-		DEBUG(2, "unpack_data got decoded data length %" L "u < expected minimum %" L "u", raw_len, minlen);
+		DEBUG(2, "unpack_data got decoded data length %zu < expected minimum %zu", raw_len, minlen);
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADLEN));
 	}
 
@@ -1330,9 +1330,9 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 	const size_t hmacbuf_len = raw_len + (unpacked - hmacbuf);
 	hmac_md5(hmac, users[userid].hmac_key, 16, hmacbuf, hmacbuf_len);
 	if (memcmp(hmac, hmac_pkt, hmaclen) != 0) {    /* verify signed data */
-		DEBUG(2, "HMAC mismatch! pkt: 0x%s, actual: 0x%s (%" L "u)",
+		DEBUG(2, "HMAC mismatch! pkt: 0x%s, actual: 0x%s (%zu)",
 			tohexstr(hmac_pkt, hmaclen, 0),	tohexstr(hmac, hmaclen, 1), hmaclen);
-		DEBUG(6, "    hmacbuf: len=%" L "u, %s", hmacbuf_len,
+		DEBUG(6, "    hmacbuf: len=%zu, %s", hmacbuf_len,
 			tohexstr(hmacbuf, hmacbuf_len, 0));
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADAUTH));
 	}
@@ -1357,7 +1357,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 	case 'O':
 		return handle_dns_set_options(q, userid, cmd_data, cmd_len);
 	default:
-		DEBUG(2, "Invalid DNS query! cmd = %c, cmd_len = %" L "u, hostname = '%s'",
+		DEBUG(2, "Invalid DNS query! cmd = %c, cmd_len = %zu, hostname = '%s'",
 				cmd, cmd_len, format_host(q->q[0].name, q->q[0].namelen, 0));
 		return write_dns(q, userid, NULL, 0, DH_ERR(BADOPTS));
 	}
@@ -1383,7 +1383,7 @@ handle_ns_request(int dns_fd, struct dns_packet *q)
 		return;
 	}
 
-	DEBUG(2, "TX: NS reply client %s ID %5d, type %d, name %s, %" L "u bytes",
+	DEBUG(2, "TX: NS reply client %s ID %5d, type %d, name %s, %zu bytes",
 			format_addr(&q->m.from, q->m.fromlen), q->id, q->q[0].type, q->q[0].name, q->q[0].namelen);
 	if (sendto(dns_fd, buf, len, 0, (struct sockaddr *) &q->m.from, q->m.fromlen) <= 0) {
 		warn("ns reply send error");
@@ -1415,7 +1415,7 @@ handle_a_request(int dns_fd, struct dns_packet *q, int fakeip)
 		return;
 	}
 
-	DEBUG(2, "TX: A reply client %s ID %5d, type %d, name %s, %" L "u bytes",
+	DEBUG(2, "TX: A reply client %s ID %5d, type %d, name %s, %zu bytes",
 			format_addr(&q->m.from, q->m.fromlen), q->id, q->q[0].type, q->q[0].name, q->q[0].namelen);
 	if (sendto(dns_fd, buf, len, 0, (struct sockaddr *) &q->m.from, q->m.fromlen) <= 0) {
 		warn("a reply send error");
