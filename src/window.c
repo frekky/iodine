@@ -320,7 +320,7 @@ void
 window_mark_sent(struct frag_buffer *w, fragment *justsent)
 /* slides window forwards and clears the fragment from buffer */
 {
-	ssize_t fragoffs = w->frags - justsent;
+	ssize_t fragoffs = justsent - w->frags;
 	if (!justsent || fragoffs < 0 || fragoffs > w->length) {
 		WDEBUG("Warning: window_mark_sent got bad fragment addr=%p, frag_offs=%zd", (void *)justsent, fragoffs);
 		return;
