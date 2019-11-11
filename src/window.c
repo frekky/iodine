@@ -179,7 +179,7 @@ window_process_incoming_fragment(struct frag_buffer *w, fragment *f)
 	unsigned seq_offset = SEQ_OFFSET(w->window_start_seq, f->seqID);
 	ssize_t dest = WRAP(w->window_start + seq_offset);
 
-	if (seq_offset > w->length) {
+	if (seq_offset >= w->length) {
 		/* The seqID is too far ahead, won't logically fit in the buffer;
 		 * we have to slide the window to accomodate at least this new sewID */
 		WDEBUG(2, "incoming frag seq=%u ahead: seq_offset=%u > %zu, window_start=%zu (seq=%u)",
@@ -192,7 +192,7 @@ window_process_incoming_fragment(struct frag_buffer *w, fragment *f)
 			return 0;
 		}
 
-		window_slide(w, seq_offset % w->length);
+		window_slide(w, (seq_offset + 1) % w->length);
 	}
 
 	WDEBUG(3, "   Putting frag seq %u into frags[%zu + %u = %zu]",
@@ -248,8 +248,8 @@ window_reassemble_data(struct frag_buffer *w, uint8_t *data, size_t *datalen, ui
 		size_t woffs = WRAP(w->window_start + n); /* current index in the buffer */
 		unsigned curseq = WRAPSEQ(w->window_start_seq + n); /* expected fragment seqID at this index */
 		fragment *f = &w->frags[woffs];
-		WDEBUG(8, "  frags[%zu]: len=%zu, seqID=%u, start=%hhu, end=%hhu, comp=%hhu",
-				woffs, f->len, f->seqID, f->start, f->end, f->compressed);
+		WDEBUG(8, "  frags[%zu]: len=%zu, seqID=%u, start=%hhu, end=%hhu, comp=%hhu; curseq=%u",
+				woffs, f->len, f->seqID, f->start, f->end, f->compressed, curseq);
 
 		if (f->len == 0) { /* Empty fragment */
 			if (chunk_nfrags > 0) {
