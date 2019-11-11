@@ -182,7 +182,7 @@ extern const unsigned char raw_header[RAW_HDR_LEN];
 		)
 #else
 /* for non-debug builds, the compiler will optimise out any debug prints more than level 2 */
-#define IF_DEBUG(level, what_do) if (level >= 2 && debug >= level) { what_do; }
+#define IF_DEBUG(level, what_do) if (level <= 2 && debug >= level) { what_do; }
 
 /* print some basic info as well as the message */
 #define _DEBUG_PRINT(level, extra_header, ...) \
