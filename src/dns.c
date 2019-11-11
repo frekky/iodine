@@ -41,6 +41,7 @@
 #endif
 
 #include "dns.h"
+#include "common.h"
 #include "encoding.h"
 #include "read.h"
 
@@ -206,8 +207,10 @@ dns_encode_data_answer(struct dns_packet *qu, uint8_t *data, size_t datalen)
  * RR types are applicable to the question type
  * returns 0 on failure, 1 on success */
 {
+	DEBUG(8, "query=%p, data=%p, datalen=%zu", (void *)qu, (void *)data, datalen);
 	if (qu->qdcount == 0 || qu->qr != QR_QUERY) {
 		/* we need a question */
+		DEBUG(7, "can't construct answer for query with no question!");
 		return NULL;
 	}
 
@@ -226,6 +229,7 @@ dns_encode_data_answer(struct dns_packet *qu, uint8_t *data, size_t datalen)
 	}
 
 	if ((q = dns_packet_create(1, ancount, 0, 0)) == NULL) {
+		DEBUG(1, "couldn't allocate memory for dns_packet: ancount=%hu", ancount);
 		return NULL;
 	}
 

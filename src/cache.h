@@ -24,7 +24,7 @@
 
 /* debug print with extra info for QMEM */
 #define QMEM_DEBUG(level, buf, ...) \
-	_DEBUG_PRINT(level, DEBUG_PRINT("[QMEM %zu/%zu] ", buf->num_pending, buf->length), __VA_ARGS__)
+	_DEBUG_PRINT(level, DEBUG_PRINT("[QMEM %zu/%zu/%zu] ", buf->num_pending, buf->length, buf->size), __VA_ARGS__)
 
 /* Struct used for QMEM + DNS cache */
 struct qmem_buffer {
@@ -43,6 +43,7 @@ void qmem_destroy(struct qmem_buffer *buf);
 int qmem_is_cached(struct qmem_buffer *buf, struct dns_packet *q, struct dns_packet **cached_q);
 void qmem_append(struct qmem_buffer *buf, struct dns_packet *q);
 void qmem_answered(struct qmem_buffer *buf, struct dns_packet *ans);
+struct dns_packet *qmem_get_next(struct qmem_buffer *buf);
 int qmem_max_wait(struct qmem_buffer *buf, struct dns_packet **sendq, struct timeval *maxwait);
 
 #endif /* SRC_CACHE_H_ */

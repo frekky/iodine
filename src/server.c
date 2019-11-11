@@ -195,7 +195,7 @@ user_process_incoming_data(int userid)
 
 	while (can_reassemble_more) {
 		size_t datalen = sizeof(pkt);
-		uint8_t compressed;
+		uint8_t compressed = 0;
 		can_reassemble_more = window_reassemble_data(users[userid].incoming, pkt, &datalen, &compressed);
 		DEBUG(4, "Incoming data for user=%d, can_reassemble=%d, datalen=%zu, compressed=%hhu, last_pkt=%ld",
 				userid, can_reassemble_more, datalen, compressed, users[userid].last_pkt);
@@ -259,18 +259,42 @@ check_pending_queries(struct timeval *maxwait)
 /* checks all pending queries from all users and answers those which have timed out */
 {
 	for (int userid = 0; userid < created_users; userid++) {
-		if (!user_active(userid) || users[userid].tuntype == USER_CONN_NONE)
+		struct tun_user *u = &users[userid];
+		if (!user_active(userid) || u->tuntype == USER_CONN_NONE)
 			continue;
 
-		struct dns_packet *tosend;
-		while (qmem_max_wait(users[userid].qmem, &tosend, maxwait)) {
+		/* Check if there are any queries in the cache which have timed out. */
+		/* If not, check if the user has any pending fragments and send them
+		 * as replies to queries from the cache. */
+		size_t num_send = window_to_send(u->outgoing, NULL);
+		DEBUG(5, "user %d has %zu pending queries, %zu pending frags", userid, num_send, u->qmem->num_pending);
+
+		while (u->qmem->num_pending != 0 || num_send != 0) {
+			struct dns_packet *tosend;
+			int run_again = qmem_max_wait(u->qmem, &tosend, maxwait);
+
+			if (!run_again && num_send == 0) {
+				DEBUG(7, "no more queries timed out, no more frags to send");
+				if (tosend) {
+					dns_packet_destroy(tosend);
+				}
+				break;
+			} else if (!tosend) {
+				DEBUG(3, "should have more queries for user %d (want to send %zu frags, num_pending=%zu)",
+						userid, num_send, u->qmem->num_pending);
+				break;
+			}
+
+			/* construct and send a DNS reply with the next data frag if one exists */
 			struct dns_packet *ans = send_data_or_ping(userid, tosend, 0);
 			send_dns(get_dns_fd(&server.dns_fds, &tosend->m.from), ans);
+
 			DEBUG(8, "ans->refcount=%zu, tosend->refcount=%zu, maxwait=%ldms",
 					ans->refcount, tosend->refcount, timeval_to_ms(maxwait));
+
 			dns_packet_destroy(ans);
 			dns_packet_destroy(tosend);
-		}
+		};
 	}
 }
 

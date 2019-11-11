@@ -140,10 +140,9 @@ qmem_answered(struct qmem_buffer *buf, struct dns_packet *ans)
 /* Call when oldest/first/earliest query added has been answered */
 {
 	size_t answered;
-
-	if (buf->num_pending == 0) {
+	if (buf->num_pending == 0 || !ans) {
 		/* No queries pending: most likely caused by bugs somewhere else. */
-		QMEM_DEBUG(1, buf, "Query answered with 0 in qmem! Fix bugs.");
+		QMEM_DEBUG(1, buf, "Query answered with 0 in qmem, ans=%p! Fix bugs.", (void *)ans);
 		return;
 	}
 	answered = buf->start_pending;
@@ -161,6 +160,24 @@ qmem_answered(struct qmem_buffer *buf, struct dns_packet *ans)
 	QMEM_DEBUG(3, buf, "query ID %d answered, replaced queries[%zu], ans->refcount=%zu", ans->id, answered, ans->refcount);
 }
 
+struct dns_packet *
+qmem_get_next(struct qmem_buffer *buf)
+/* returns the oldest query from the cache, which can be answered when needed
+ * Note: call qmem_answered() if it is answered! */
+{
+	if (buf->num_pending == 0) {
+		QMEM_DEBUG(4, buf, "qmem is empty");
+		return NULL;
+	}
+
+	/* queries will always be in time order, so first in buf is oldest */
+	struct dns_packet *q = buf->queries[buf->start_pending];
+	q->refcount++;
+	QMEM_DEBUG(5, buf, "pulled oldest from cache at index %zu: query ID=%hu, refcount=%zu",
+			buf->start_pending, q->id, q->refcount);
+	return q;
+}
+
 int
 qmem_max_wait(struct qmem_buffer *buf, struct dns_packet **sendq, struct timeval *maxwait)
 /* Calculates max interval before the next pending query times out
@@ -170,21 +187,16 @@ qmem_max_wait(struct qmem_buffer *buf, struct dns_packet **sendq, struct timeval
  * *sendq is next query to timeout */
 {
 	struct timeval now, tmp, age;
-	struct dns_packet *q = NULL;
+	struct dns_packet *q = qmem_get_next(buf);
 
-	if (buf->num_pending == 0) {
-		return 0;
-	}
-
-	gettimeofday(&now, NULL);
-
-	/* queries will always be in time order, so first in buf is oldest */
-	q = buf->queries[buf->start_pending];
 	if (sendq) {
 		*sendq = q;
-		q->refcount++;
 	}
 
+	if (!q)
+		return 0;
+
+	gettimeofday(&now, NULL);
 	timersub(&now, &q->m.time_recv, &age);
 	QMEM_DEBUG(8, buf, "next to timeout is queries[%zu], refcount=%zu, age=%ldms",
 			buf->start_pending, q->refcount, timeval_to_ms(&age));
