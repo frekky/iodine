@@ -67,7 +67,7 @@ struct frag_buffer {
 
 /* Find the wrapped offset between sequence IDs start and a
  * Note: the maximum possible offset is MAX_SEQ_ID - 1 */
-#define SEQ_OFFSET(start, a) ((a >= start) ? a - start : MAX_SEQ_ID - start + a)
+#define SEQ_OFFSET(start, a) ((a >= start) ? (a - start) : (MAX_SEQ_ID - start + a))
 
 /* Wrap index x to a value within the window buffer length */
 #define WRAP(x) ((x) % w->length)

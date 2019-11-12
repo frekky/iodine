@@ -22,9 +22,16 @@
 
 #define MAX_CACHESIZE 128
 
+/* calculates the forwards 'distance' between start and end in a ring */
+#define RING_OFFSET(start, end, len) ((end >= start) ? (end - start) : (len - start + end))
+
 /* debug print with extra info for QMEM */
 #define QMEM_DEBUG(level, buf, ...) \
 	_DEBUG_PRINT(level, DEBUG_PRINT("[QMEM %zu/%zu/%zu] ", buf->num_pending, buf->length, buf->size), __VA_ARGS__)
+
+#define QMEM_PRINT_STATS(buf, prefix) \
+	QMEM_DEBUG(8, buf, prefix "start=%zu, start_pending=%zu, end=%zu, start_pending<-->end=%zu", \
+		buf->start, buf->start_pending, buf->end, RING_OFFSET(buf->start_pending, buf->end, buf->size))
 
 /* Struct used for QMEM + DNS cache */
 struct qmem_buffer {

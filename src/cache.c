@@ -112,11 +112,18 @@ void
 qmem_append(struct qmem_buffer *buf, struct dns_packet *q)
 /* Appends incoming query to the buffer. */
 {
-	if (buf->num_pending >= buf->size) {
+	QMEM_PRINT_STATS(buf, " pre-append: ");
+
+	if (buf->num_pending == buf->size) {
 		/* this means we have QMEM_LEN *pending* queries; write new query to [end] */
-		QMEM_DEBUG(2, buf, "Full of pending queries! Replacing old query %hu with new %hu.",
+		QMEM_DEBUG(2, buf, "Full of pending queries! Replacing oldest unanswered query id=%hu with id=%hu.",
 				   buf->queries[buf->end]->id, q->id);
+
+		/* clean up and increment start_pending to point to the next-oldest query */
 		dns_packet_destroy(buf->queries[buf->end]);
+		buf->start_pending = (buf->start_pending + 1) % buf->size;
+	} else {
+		buf->num_pending++;
 	}
 
 	if (buf->length < buf->size) {
@@ -128,17 +135,20 @@ qmem_append(struct qmem_buffer *buf, struct dns_packet *q)
 
 	/* Copy query pointer into end of buffer */
 	q->refcount++;
-	QMEM_DEBUG(5, buf, "add query ID %d (addr=%p, refcount=%zu), replacing query addr=%p",
-			q->id, (void *)q, q->refcount, (void *)buf->queries[buf->end]);
+	QMEM_DEBUG(5, buf, "add Q:id=%d to queries[%zu]:addr=%p, refcount=%zu, replacing Q:addr=%p",
+			q->id, buf->end, (void *)q, q->refcount, (void *)buf->queries[buf->end]);
 	buf->queries[buf->end] = q;
 	buf->end = (buf->end + 1) % buf->size;
-	buf->num_pending += 1;
+
+	QMEM_PRINT_STATS(buf, "post-append: ");
 }
 
 void
 qmem_answered(struct qmem_buffer *buf, struct dns_packet *ans)
 /* Call when oldest/first/earliest query added has been answered */
 {
+	QMEM_PRINT_STATS(buf, " pre-answered: ");
+
 	size_t answered;
 	if (buf->num_pending == 0 || !ans) {
 		/* No queries pending: most likely caused by bugs somewhere else. */
@@ -158,6 +168,7 @@ qmem_answered(struct qmem_buffer *buf, struct dns_packet *ans)
 	ans->refcount++;
 
 	QMEM_DEBUG(3, buf, "query ID %d answered, replaced queries[%zu], ans->refcount=%zu", ans->id, answered, ans->refcount);
+	QMEM_PRINT_STATS(buf, "post-answered: ");
 }
 
 struct dns_packet *
@@ -166,15 +177,17 @@ qmem_get_next(struct qmem_buffer *buf)
  * Note: call qmem_answered() if it is answered! */
 {
 	if (buf->num_pending == 0) {
-		QMEM_DEBUG(4, buf, "qmem is empty");
+		QMEM_DEBUG(4, buf, "qmem is empty: length=%zu, start=%zu, start_pending=%zu, end=%zu",
+				buf->length, buf->start, buf->start_pending, buf->end);
 		return NULL;
 	}
 
 	/* queries will always be in time order, so first in buf is oldest */
 	struct dns_packet *q = buf->queries[buf->start_pending];
 	q->refcount++;
-	QMEM_DEBUG(5, buf, "pulled oldest from cache at index %zu: query ID=%hu, refcount=%zu",
-			buf->start_pending, q->id, q->refcount);
+	QMEM_DEBUG(5, buf, "pulled oldest from cache at index %zu: query ID=%hu,"
+			" refcount=%zu; start=%zu, start_pending=%zu, end=%zu",
+			buf->start_pending, q->id, q->refcount, buf->start, buf->start_pending, buf->end);
 	return q;
 }
 
@@ -198,8 +211,8 @@ qmem_max_wait(struct qmem_buffer *buf, struct dns_packet **sendq, struct timeval
 
 	gettimeofday(&now, NULL);
 	timersub(&now, &q->m.time_recv, &age);
-	QMEM_DEBUG(8, buf, "next to timeout is queries[%zu], refcount=%zu, age=%ldms",
-			buf->start_pending, q->refcount, timeval_to_ms(&age));
+	QMEM_DEBUG(8, buf, "next to timeout is queries[%zu], addr=%p, refcount=%zu, age=%ldms",
+			buf->start_pending, (void *)q, q->refcount, timeval_to_ms(&age));
 	if (!timercmp(&age, &buf->timeout, <)) {
 		/* return query to respond to when if timed out */
 		QMEM_DEBUG(3, buf, "TIMEOUT: ID %d, age=%ldms, timeout %ldms",
