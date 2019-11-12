@@ -131,7 +131,7 @@ window_slide(struct frag_buffer *w, unsigned slide)
 	size_t new_start = WRAP(w->window_start + slide);
 	unsigned new_start_seq = WRAPSEQ(w->window_start_seq + slide);
 
-	WDEBUG(2, "move forwards by %u: start=%zu (seq=%u) --> start=%zu (seq=%u)",
+	WDEBUG(4, "move forwards by %u: start=%zu (seq=%u) --> start=%zu (seq=%u)",
 			slide, w->window_start, w->window_start_seq, new_start, new_start_seq);
 
 	size_t num_deleted = 0;
@@ -146,12 +146,12 @@ window_slide(struct frag_buffer *w, unsigned slide)
 			size_t woffs = WRAP(w->window_start + i);
 			fragment *f = &w->frags[woffs];
 			if (f->len != 0) {
-				WDEBUG(4, "    clear frags[%zu]: seqID=%u, len %zu", woffs, f->seqID, f->len);
+				WDEBUG(5, "    clear frags[%zu]: seqID=%u, len %zu", woffs, f->seqID, f->len);
 				f->len = 0;
 				num_deleted++;
 			} else {
 				/* you can't really "clear" a hole... */
-				WDEBUG(4, "    clear hole at index %zu", woffs);
+				WDEBUG(5, "    clear hole at index %zu", woffs);
 			}
 		}
 
@@ -160,7 +160,7 @@ window_slide(struct frag_buffer *w, unsigned slide)
 		w->window_start = new_start;
 		w->window_start_seq = new_start_seq;
 	}
-	WDEBUG(3, "deleted %zu frags for slide", num_deleted);
+	WDEBUG(4, "deleted %zu frags for slide", num_deleted);
 }
 
 int
@@ -268,7 +268,7 @@ window_reassemble_data(struct frag_buffer *w, uint8_t *data, size_t *datalen, ui
 			/* this fragment should be the start of a new chunk */
 			if (chunk_nfrags != 0) {
 				/* there is a start fragment in the middle of the chunk, discard the fragments before this point */
-				WDEBUG(2, "(!) false start in chunk at frags[%zu]: seqID=%u, chunk_nfrags=%zu", woffs, f->seqID, chunk_nfrags);
+				WDEBUG(1, "(!) false start in chunk at frags[%zu]: seqID=%u, chunk_nfrags=%zu", woffs, f->seqID, chunk_nfrags);
 				invalid = 1;
 				break;
 			}
@@ -308,7 +308,7 @@ window_reassemble_data(struct frag_buffer *w, uint8_t *data, size_t *datalen, ui
 			chunk_nfrags, chunk_len, chunk_start, compression, invalid, more_to_check, found_end);
 
 	if (chunk_nfrags == 0 || (!found_end && !invalid)) {
-		WDEBUG(2, "no complete chunk found in buffer");
+		WDEBUG(3, "no complete chunk found in buffer");
 		*datalen = 0;
 		return 0;
 	}
@@ -340,7 +340,7 @@ window_reassemble_data(struct frag_buffer *w, uint8_t *data, size_t *datalen, ui
 	*datalen = copy_offset;
 	*_compression = compression;
 
-	WDEBUG(2, "Reassembled %zu bytes from %zu frags (chunk_len=%zu), comp=%hhu, invalid=%d",
+	WDEBUG(3, "Reassembled %zu bytes from %zu frags (chunk_len=%zu), comp=%hhu, invalid=%d",
 			copy_offset, chunk_nfrags, chunk_len, compression, invalid);
 
 	return more_to_check;
@@ -401,7 +401,7 @@ window_add_outgoing_data(struct frag_buffer *w, uint8_t *data, size_t len, uint8
 	compressed &= 1;
 	size_t offset = 0;
 	fragment *f;
-	WDEBUG(2, "add_outgoing_data: chunk len %zu -> %zu frags, max fragsize %zu",
+	WDEBUG(3, "add_outgoing_data: chunk len %zu -> %zu frags, max fragsize %zu",
 			len, nfrags, w->maxfraglen);
 	for (size_t i = 0; i < nfrags; i++) {
 		f = &w->frags[w->last_write];
