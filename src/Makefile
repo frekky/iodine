@@ -1,8 +1,8 @@
 COMMONOBJS = tun.o dns.o read.o base32.o base64.o base64u.o base128.o base256.o encoding.o md5.o hmac_md5.o window.o auth.o common.o util.o
-CLIENTOBJS = iodine.o client.o
-CLIENT = ../bin/iodine
+CLIENTOBJS = iodine.o qtrack.o client.o
+CLIENT     = ../bin/iodine
 SERVEROBJS = iodined.o cache.o user.o fw_query.o server.o
-SERVER = ../bin/iodined
+SERVER     = ../bin/iodined
 
 OS = `echo $(TARGETOS) | tr "a-z" "A-Z"`
 ARCH = `uname -m`
@@ -35,8 +35,8 @@ $(SERVER): $(COMMONOBJS) $(SERVEROBJS)
 	@echo LD $@
 	@mkdir -p ../bin
 	@$(CC) $(COMMONOBJS) $(SERVEROBJS) -o $(SERVER) $(LDFLAGS)
-
-.c.o:
+	
+.c.o: 
 	@echo CC $<
 	@$(CC) $(CFLAGS) $< -o $@
 

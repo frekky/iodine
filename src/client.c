@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2006-2014 Erik Ekman <yarrick@kryo.se>,
  * 2006-2009 Bjorn Andersson <flex@kryo.se>,
- * 2015 Frekk van Blagh <frekk@frekkworks.com>
+ * 2015-2019 Frekk van Blagh <frekk@frekkworks.com>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -60,12 +60,12 @@
 #include "version.h"
 #include "window.h"
 #include "util.h"
+#include "qtrack.h"
 #include "client.h"
 #include "hmac_md5.h"
 
 static int parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int*);
 static int handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int timeout);
-static int send_ping(int ping_response, int timeout);
 static int handshake_switch_options();
 
 void
@@ -96,14 +96,7 @@ immediate_mode_defaults()
 	this.server_timeout_ms = 0;
 }
 
-/* Client-side query tracking for lazy mode */
-
-/* Handy macro for printing this.stats with messages */
-#define QTRACK_DEBUG(level, ...) \
-		_DEBUG_PRINT(level, DEBUG_PRINT("[QTRACK (%zu/%zu), ? %zu, TO %zu, S %zu] ", this.num_pending, PENDING_QUERIES_LENGTH, \
-			this.num_untracked, this.num_timeouts, this.outbuf->numitems), __VA_ARGS__)
-
-static int
+int
 update_server_timeout(int handshake)
 /* Calculate server timeout based on average RTT, send ping "handshake" to set
  * if handshake sent, return query ID */
@@ -146,134 +139,6 @@ update_server_timeout(int handshake)
 		return send_ping(1, 1);
 	}
 	return -1;
-}
-
-static void
-check_pending_queries()
-/* Updates pending queries list */
-{
-	this.num_pending = 0;
-	struct timeval now, qtimeout, max_timeout;
-	gettimeofday(&now, NULL);
-	/* Max timeout for queries is max interval + 1 second extra */
-	max_timeout = ms_to_timeval(this.max_timeout_ms + 1000);
-	for (int i = 0; i < PENDING_QUERIES_LENGTH; i++) {
-		if (this.pending_queries[i].time.tv_sec > 0 && this.pending_queries[i].id >= 0) {
-			timeradd(&this.pending_queries[i].time, &max_timeout, &qtimeout);
-			if (!timercmp(&qtimeout, &now, >)) {
-				/* Query has timed out, clear timestamp but leave ID */
-				this.pending_queries[i].time.tv_sec = 0;
-				this.num_timeouts++;
-			}
-			this.num_pending++;
-		}
-	}
-}
-
-static void
-query_sent_now(int id)
-{
-	int i = 0, found = 0;
-	if (!this.pending_queries)
-		return;
-
-	if (id < 0 || id > 65535)
-		return;
-
-	/* Replace any empty queries first, then timed out ones if necessary */
-	for (i = 0; i < PENDING_QUERIES_LENGTH; i++) {
-		if (this.pending_queries[i].id < 0) {
-			found = 1;
-			break;
-		}
-	}
-	if (!found) {
-		for (i = 0; i < PENDING_QUERIES_LENGTH; i++) {
-			if (this.pending_queries[i].time.tv_sec == 0) {
-				found = 1;
-				break;
-			}
-		}
-	}
-	/* if no slots found after both checks */
-	if (!found) {
-		QTRACK_DEBUG(1, "Buffer full! Failed to add id %d.", id);
-	} else {
-		/* Add query into found location */
-		this.pending_queries[i].id = id;
-		gettimeofday(&this.pending_queries[i].time, NULL);
-		this.num_pending ++;
-		QTRACK_DEBUG(4, "Adding query id %d into this.pending_queries[%d]", id, i);
-		id = -1;
-	}
-}
-
-static void
-got_response(int id, int immediate)
-/* immediate: if query was replied to immediately (see below) */
-{
-	struct timeval now, rtt;
-	time_t rtt_ms;
-	static time_t rtt_min_ms = 1;
-	gettimeofday(&now, NULL);
-
-	QTRACK_DEBUG(4, "Got answer id %d (%s)", id, immediate ? "immediate" : "lazy");
-
-	for (int i = 0; i < PENDING_QUERIES_LENGTH; i++) {
-		if (id >= 0 && this.pending_queries[i].id == id) {
-			if (this.num_pending > 0)
-				this.num_pending--;
-
-			if (this.pending_queries[i].time.tv_sec == 0) {
-				if (this.num_timeouts > 0) {
-					/* If query has timed out but is still stored - just in case
-					 * ID is kept on timeout in check_pending_queries() */
-					this.num_timeouts --;
-					immediate = 0;
-				} else {
-					/* query is empty */
-					continue;
-				}
-			}
-
-			if (immediate || debug >= 4) {
-				timersub(&now, &this.pending_queries[i].time, &rtt);
-				rtt_ms = timeval_to_ms(&rtt);
-			}
-
-			QTRACK_DEBUG(5, "    found answer id %d in pending queries[%d], %ld ms old", id, i, rtt_ms);
-
-			if (immediate) {
-				/* If this was an immediate response we can use it to get
-				   more detailed connection statistics like RTT.
-				   This lets us determine and adjust server lazy response time
-				   during the session much more accurately. */
-				this.rtt_total_ms += rtt_ms;
-				this.num_immediate++;
-
-				if (this.autodetect_server_timeout) {
-					if (this.autodetect_delay_variance) {
-						if (rtt_ms > 0 && (rtt_ms < rtt_min_ms || 1 == rtt_min_ms)) {
-							rtt_min_ms = rtt_ms;
-						}
-						this.downstream_delay_variance = (double) (this.rtt_total_ms /
-							this.num_immediate) / rtt_min_ms;
-					}
-					update_server_timeout(0);
-				}
-			}
-
-			/* Remove query info from buffer to mark it as answered */
-			id = -1;
-			this.pending_queries[i].id = -1;
-			this.pending_queries[i].time.tv_sec = 0;
-			break;
-		}
-	}
-	if (id > 0) {
-		QTRACK_DEBUG(4, "    got untracked response to id %d.", id);
-		this.num_untracked++;
-	}
 }
 
 static int
@@ -396,7 +261,7 @@ send_packet(char cmd, const uint8_t *rawdata, const size_t rawdatalen, const int
 	return send_query(buf, encdatalen + 2);
 }
 
-static int
+int
 send_ping(int ping_response, int set_timeout)
 {
 	this.num_pings++;
@@ -431,7 +296,7 @@ send_ping(int ping_response, int set_timeout)
 		id = send_packet('p', data, sizeof(data), 12);
 
 		/* Log query ID as being sent now */
-		query_sent_now(id);
+		query_sent_now(&this.qtrack, id);
 		return id;
 	} else {
 		send_raw(this.dns_fd, NULL, 0, this.userid, RAW_HDR_CMD_PING,
@@ -440,7 +305,7 @@ send_ping(int ping_response, int set_timeout)
 	}
 }
 
-static void
+void
 send_next_frag()
 /* Sends next available fragment of data from the outgoing window buffer */
 {
@@ -491,7 +356,7 @@ send_next_frag()
 
 	id = send_query(buf, enclen + 1);
 	/* Log query ID as being sent now */
-	query_sent_now(id);
+	query_sent_now(&this.qtrack, id);
 	window_mark_sent(this.outbuf, f);
 
 	this.num_frags_sent++;
@@ -891,7 +756,9 @@ tunnel_tun()
 }
 
 
-#define DNS_CLEANUP got_response(q->id, 0); dns_packet_destroy(q);
+#define DNS_CLEANUP \
+	got_response(&this.qtrack, q->id, 0); \
+	dns_packet_destroy(q);
 
 static void
 tunnel_dns()
@@ -973,6 +840,7 @@ tunnel_dns()
 		buflen -= RAW_HDR_LEN;
 		datalen = sizeof(buf);
 		if (uncompress(cbuf, &datalen, data, buflen) == Z_OK) {
+			DEBUG(2, "OUT: packet %zu bytes on tun", datalen);
 			write_tun(this.tun_fd, cbuf, datalen);
 		}
 
@@ -986,7 +854,7 @@ tunnel_dns()
 	/* Decode the downstream data header and fragment-ify ready for processing */
 	f.data = buf;
 	if (parse_data(buf, buflen, &f, &immediate, &ping)) {
-		got_response(q->id, immediate);
+		got_response(&this.qtrack, q->id, immediate);
 		dns_packet_destroy(q); /* we don't need this any more */
 	} else {
 		DEBUG(1, "failed to parse downstream data/ping packet!");
@@ -1012,6 +880,9 @@ tunnel_dns()
 		datalen = sizeof(cbuf);
 		can_reassemble_more = window_reassemble_data(this.inbuf, cbuf, &datalen, &compressed);
 
+		if (datalen == 0)
+			break;
+
 		/* try to decompress the data if it is compressed */
 		if (compressed) {
 			buflen = sizeof(buf);
@@ -1030,28 +901,57 @@ tunnel_dns()
 				warn("write_stdout != datalen");
 			}
 		} else {
+			DEBUG(2, "OUT: packet %zu bytes on tun", datalen);
 			write_tun(this.tun_fd, data, datalen);
 		}
 	}
 }
 
+static void
+print_stats_report()
+{
+	static size_t sent_since_report = 0, recv_since_report = 0;
+
+	/* print useful statistics report */
+	fprintf(stderr, "\n============ iodine connection statistics (user %1d) ============\n", this.userid);
+	fprintf(stderr, " Queries   sent: %8" L "u"  ", answered: %8" L "u"  ", SERVFAILs: %4" L "u\n",
+			this.num_sent, this.num_recv, this.num_servfail);
+	fprintf(stderr, "  last %3d secs: %7" L "u" " (%4" L "u/s),   replies: %7" L "u" " (%4" L "u/s)\n",
+			this.stats, this.num_sent - sent_since_report, (this.num_sent - sent_since_report) / this.stats,
+			this.num_recv - recv_since_report, (this.num_recv - recv_since_report) / this.stats);
+	fprintf(stderr, "  num auth rejected: %4" L "u,   untracked: %4" L "u,   lazy mode: %1d\n",
+			this.num_badauth, this.num_untracked, this.lazymode);
+	fprintf(stderr, " Min send: %5" L "d ms, Avg RTT: %5" L "d ms  Timeout server: %4" L "d ms\n",
+			this.min_send_interval_ms, this.rtt_total_ms / this.num_immediate, this.server_timeout_ms);
+	fprintf(stderr, " Queries immediate: %5" L "u, timed out: %4" L "u    target: %4" L "d ms\n",
+			this.num_immediate, this.num_timeouts, this.max_timeout_ms);
+	if (this.conn == CONN_DNS_NULL) {
+		fprintf(stderr, " Out of sequence frags: %4u          down frag: %4" L "d ms\n",
+				 this.inbuf->oos, this.downstream_timeout_ms);
+		fprintf(stderr, " TX fragments: %8" L "u" ",   RX: %8" L "u" ",   pings: %8" L "u" "\n",
+				this.num_frags_sent, this.num_frags_recv, this.num_pings);
+	}
+	fprintf(stderr, " Pending frags: %4" L "u\n", this.outbuf->numitems);
+	/* update since-last-report this.stats */
+	sent_since_report = this.num_sent;
+	recv_since_report = this.num_recv;
+}
+
 int
 client_tunnel()
+/* main client loop */
 {
-	struct timeval tv, nextresend, tmp, now, now2;
+	struct timeval select_timeout;
 	fd_set fds;
-	int rv;
-	int i, use_min_send;
-	int sending, total, maxfd;
-	time_t last_stats;
-	size_t sent_since_report, recv_since_report;
+	int rv = 0;
+	int i;
+	int maxfd;
 
 	this.connected = 1;
 
 	/* start counting now */
-	rv = 0;
 	this.lastdownstreamtime = time(NULL);
-	last_stats = time(NULL);
+	time_t last_stats = time(NULL);
 
 	/* reset connection statistics */
 	this.num_badauth = 0;
@@ -1065,97 +965,17 @@ client_tunnel()
 	this.num_frags_recv = 0;
 	this.num_pings = 0;
 
-	sent_since_report = 0;
-	recv_since_report = 0;
-
-	use_min_send = 0;
-
 	while (this.running) {
-		if (!use_min_send)
-			tv = ms_to_timeval(this.max_timeout_ms);
+		select_timeout.tv_sec = 5;
+		select_timeout.tv_usec = 0;
 
-		/* TODO: detect DNS servers which drop frequent requests
-		 * TODO: adjust number of pending queries based on current data rate */
-		if (this.conn == CONN_DNS_NULL && !use_min_send) {
-
-			/* Send a single query per loop */
-			sending = window_to_send(this.outbuf, NULL);
-			total = sending;
-			check_pending_queries();
-			if (this.num_pending < this.windowsize_down && this.lazymode)
-				total = MAX(total, this.windowsize_down - this.num_pending);
-			else if (this.num_pending < 1 && !this.lazymode)
-				total = MAX(total, 1);
-
-			QTRACK_DEBUG(2, "sending=%d, total=%d, next_ack=%d, outbuf.n=%zu",
-					sending, total, this.next_downstream_ack, this.outbuf->numitems);
-			/* Upstream traffic - this is where all ping/data queries are sent */
-			if (sending > 0 || total > 0) {
-
-				if (sending > 0) {
-					/* More to send - next fragment */
-					send_next_frag();
-				} else {
-					/* Send ping if we didn't send anything yet */
-					send_ping(0, (this.num_pings > 20 &&
-							this.num_pings % 50 == 0));
-				}
-
-				sending--;
-				total--;
-				QTRACK_DEBUG(3, "Sent a query to fill server lazy buffer to %zu, will send another %d",
-							 this.lazymode ? this.windowsize_down : 1, total);
-
-				if (sending > 0 || (total > 0 && this.lazymode)) {
-					/* If sending any data fragments, or server has too few
-					 * pending queries, send another one after min. interval */
-					/* TODO: enforce min send interval even if we get new data */
-					tv = ms_to_timeval(this.min_send_interval_ms);
-					if (this.min_send_interval_ms)
-						use_min_send = 1;
-					tv.tv_usec += 1;
-				} else if (total > 0 && !this.lazymode) {
-					/* In immediate mode, use normal interval when needing
-					 * to send non-data queries to probe server. */
-					tv = ms_to_timeval(this.send_interval_ms);
-				}
-
-				if (sending == 0 && !use_min_send) {
-					/* check next resend time when not sending any data */
-					if (timercmp(&nextresend, &tv, <))
-						tv = nextresend;
-				}
-			}
+		if (this.lazymode && this.conn == CONN_DNS_NULL) {
+			fill_server_lazy_queue(&select_timeout);
 		}
 
-		if (this.stats) {
-			if (difftime(time(NULL), last_stats) >= this.stats) {
-				/* print useful statistics report */
-				fprintf(stderr, "\n============ iodine connection statistics (user %1d) ============\n", this.userid);
-				fprintf(stderr, " Queries   sent: %8" L "u"  ", answered: %8" L "u"  ", SERVFAILs: %4" L "u\n",
-						this.num_sent, this.num_recv, this.num_servfail);
-				fprintf(stderr, "  last %3d secs: %7" L "u" " (%4" L "u/s),   replies: %7" L "u" " (%4" L "u/s)\n",
-						this.stats, this.num_sent - sent_since_report, (this.num_sent - sent_since_report) / this.stats,
-						this.num_recv - recv_since_report, (this.num_recv - recv_since_report) / this.stats);
-				fprintf(stderr, "  num auth rejected: %4" L "u,   untracked: %4" L "u,   lazy mode: %1d\n",
-						this.num_badauth, this.num_untracked, this.lazymode);
-				fprintf(stderr, " Min send: %5" L "d ms, Avg RTT: %5" L "d ms  Timeout server: %4" L "d ms\n",
-						this.min_send_interval_ms, this.rtt_total_ms / this.num_immediate, this.server_timeout_ms);
-				fprintf(stderr, " Queries immediate: %5" L "u, timed out: %4" L "u    target: %4" L "d ms\n",
-						this.num_immediate, this.num_timeouts, this.max_timeout_ms);
-				if (this.conn == CONN_DNS_NULL) {
-					fprintf(stderr, " Out of sequence frags: %4u          down frag: %4" L "d ms\n",
-							 this.inbuf->oos, this.downstream_timeout_ms);
-					fprintf(stderr, " TX fragments: %8" L "u" ",   RX: %8" L "u" ",   pings: %8" L "u" "\n",
-							this.num_frags_sent, this.num_frags_recv, this.num_pings);
-				}
-				fprintf(stderr, " Pending frags: %4" L "u\n", this.outbuf->numitems);
-				/* update since-last-report this.stats */
-				sent_since_report = this.num_sent;
-				recv_since_report = this.num_recv;
-				last_stats = time(NULL);
-
-			}
+		if (this.stats && difftime(time(NULL), last_stats) >= this.stats) {
+			print_stats_report();
+			last_stats = time(NULL);
 		}
 
 		FD_ZERO(&fds);
@@ -1174,23 +994,9 @@ client_tunnel()
 		FD_SET(this.dns_fd, &fds);
 		maxfd = MAX(this.dns_fd, maxfd);
 
-		DEBUG(4, "Waiting %ld ms before sending more... (min_send %d)", timeval_to_ms(&tv), use_min_send);
+		DEBUG(4, "Waiting %ld ms before sending more...", timeval_to_ms(&select_timeout));
 
-		if (use_min_send) {
-			gettimeofday(&now, NULL);
-		}
-
-		i = select(maxfd + 1, &fds, NULL, NULL, &tv);
-
-		if (use_min_send && i > 0) {
-			/* enforce min_send_interval if we get interrupted by new tun data */
-			gettimeofday(&now2, NULL);
-			timersub(&now2, &now, &tmp);
-			timersub(&tv, &tmp, &now);
-			tv = now;
-		} else {
-			use_min_send = 0;
-		}
+		i = select(maxfd + 1, &fds, NULL, NULL, &select_timeout);
 
 		if (difftime(time(NULL), this.lastdownstreamtime) > 60) {
  			fprintf(stderr, "No downstream data received in 60 seconds, shutting down.\n");
@@ -1226,8 +1032,6 @@ client_tunnel()
 				tunnel_dns();
 			}
 		}
-		if (this.running == 0)
-			break;
 	}
 
 	return rv;
@@ -1988,10 +1792,10 @@ handshake_set_timeout()
 			if ((ret = handshake_waitdns(in, &len, 0, 'P', i + 1)) != 1) {
 				/* error responses are not so useful for RTT calculation */
 				fprintf(stderr, "!");
-				got_response(id, 0);
+				got_response(&this.qtrack, id, 0);
 				continue;
 			}
-			got_response(id, 1);
+			got_response(&this.qtrack, id, 1);
 
 			if (set) {
 				fprintf(stderr, "done.");
@@ -2061,13 +1865,13 @@ client_handshake()
 	if (this.enc_up == C_UNSET) {
 		this.enc_up = handshake_codec_autodetect(0);
 		if (!this.running)
-			return -1;
+			return 0;
 	}
 
 	if (this.enc_down == C_UNSET) {
 		this.enc_down = handshake_codec_autodetect(1);
 		if (!this.running)
-			return -1;
+			return 0;
 	}
 
 	if (this.autodetect_frag_size) {
@@ -2079,7 +1883,7 @@ client_handshake()
 
 	/* Set server-side options (up/down codec, compression, fraglen) and request desired connection. */
 	if (!handshake_switch_options()) {
-		return -1;
+		return 0;
 	}
 
 	/* init windowing protocol */
@@ -2087,13 +1891,16 @@ client_handshake()
 	this.outbuf = window_buffer_init(WINDOW_BUFFER_LENGTH, this.maxfragsize_up, WINDOW_SENDING);
 	/* Incoming buffer max fragsize doesn't matter */
 	this.inbuf = window_buffer_init(WINDOW_BUFFER_LENGTH, MAX_FRAGSIZE_DOWN, WINDOW_RECVING);
+	if (!this.outbuf || !this.inbuf) {
+		DEBUG(1, "couldn't allocate window buffers: inbuf=%p, outbuf=%p", (void *)this.inbuf, (void *)this.outbuf);
+		return 0;
+	}
 
-	/* init query tracking */
+	if (!qtrack_init(&this.qtrack, this.max_queries)) {
+		DEBUG(1, "couldn't init qtrack");
+		return 0;
+	}
 	this.num_untracked = 0;
-	this.num_pending = 0;
-	this.pending_queries = calloc(PENDING_QUERIES_LENGTH, sizeof(struct query_tuple));
-	for (int i = 0; i < PENDING_QUERIES_LENGTH; i++)
-		this.pending_queries[i].id = -1;
 
 	/* set server window/timeout parameters and calculate RTT */
 	handshake_set_timeout();

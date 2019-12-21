@@ -41,6 +41,7 @@
 #include "common.h"
 #include "version.h"
 #include "tun.h"
+#include "qtrack.h"
 #include "client.h"
 #include "util.h"
 #include "encoding.h"
@@ -100,6 +101,8 @@ static struct client_instance preset_default = {
 	.maxfragsize_down = MAX_FRAGSIZE_DOWN,
 	.compression_up = 1,
 	.compression_down = 1,
+	.max_queries = 16,
+	.target_queries = 8,
 	.windowsize_up = 8,
 	.windowsize_down = 8,
 	.hostname_maxlen = 0xFF,
@@ -114,6 +117,8 @@ static struct client_instance preset_original = {
 	.send_interval_ms = 0,
 	.server_timeout_ms = 3000,
 	.autodetect_server_timeout = 1,
+	.max_queries = 8,
+	.target_queries = 1,
 	.windowsize_down = 1,
 	.windowsize_up = 1,
 	.hostname_maxlen = 0xFF,
@@ -138,8 +143,10 @@ static struct client_instance preset_fast = {
 	.maxfragsize_down = 1176,
 	.compression_up = 1,
 	.compression_down = 1,
-	.windowsize_up = 30,
-	.windowsize_down = 30,
+	.max_queries = 32,
+	.target_queries = 16,
+	.windowsize_up = 16,
+	.windowsize_down = 16,
 	.hostname_maxlen = 0xFF,
 	.do_qtype = T_UNSET,
 	PRESET_STATIC_VALUES
@@ -157,6 +164,8 @@ static struct client_instance preset_fallback = {
 	.maxfragsize_down = 500,
 	.compression_up = 1,
 	.compression_down = 1,
+	.max_queries = 1,
+	.target_queries = 1,
 	.windowsize_up = 1,
 	.windowsize_down = 1,
 	.hostname_maxlen = 100,
@@ -213,7 +222,7 @@ print_usage()
 	extern char *__progname;
 
 	fprintf(stderr, "Usage: %s [-v] [-h] [-Y preset] [-V sec] [-X port] [-f] [-r] [-u user] [-t chrootdir] [-d device] "
-			"[-Q numqueries] [-i sec -j sec] [-I sec] [-J var] [-c 0|1] [-C 0|1] [-s ms] "
+			"[-Q numqueries] [-i sec] [-I sec] [-J var] [-c 0|1] [-C 0|1] [-s ms] "
 			"[-P password] [-m maxfragsize] [-M maxlen] [-T type] [-O enc] [-L 0|1] [-R port[,host] ] "
 			"[-z context] [-F pidfile] topdomain [nameserver1 [nameserver2 [...]]]\n", __progname);
 }
@@ -257,12 +266,10 @@ help()
 	fprintf(stderr, "  -P  password used for authentication (max 32 chars will be used)\n\n");
 
 	fprintf(stderr, "Fine-tuning options:\n");
-	fprintf(stderr, "  -Q  maximum number of queries to be send at a time\n");
-	fprintf(stderr, "  -k  max retries for sending packets (default: 0, retries disabled)\n");
+	fprintf(stderr, "  -Q  maximum number of pending queries at any time (default: 16)\n");
+	fprintf(stderr, "  -q  how many queries to queue at the server, lazy mode only (default: 0)\n");
 	fprintf(stderr, "  -i  server-side request timeout in lazy mode (default: auto)\n");
-	fprintf(stderr, "  -j  downstream fragment ACK timeout, implies -i4 (default: 2 sec)\n");
 	fprintf(stderr, "  -J  downstream fragment ACK delay variance factor (default: 2.0), 0: auto\n");
-
 	fprintf(stderr, "  -c 1: use downstream compression (default), 0: disable\n");
 	fprintf(stderr, "  -C 1: use upstream compression (default), 0: disable\n\n");
 
@@ -421,7 +428,7 @@ main(int argc, char **argv)
 	 * This is so that all options override preset values regardless of order in command line */
 	int optind_orig = optind, preset_id = -1;
 
-	static char *iodine_args_short = "46vfDhrY:s:V:c:C:i:j:J:u:t:d:R:P:Q:m:M:F:T:N:O:L:I:k:";
+	static char *iodine_args_short = "46vfDhrY:s:V:c:C:i:J:u:t:d:R:P:Q:q:m:M:F:T:N:O:L:I:";
 
 	while ((choice = getopt_long(argc, argv, iodine_args_short, iodine_args, NULL))) {
 		/* Check if preset has been found yet so we don't process any other options */
@@ -570,13 +577,6 @@ main(int argc, char **argv)
 			this.server_timeout_ms = strtod(optarg, NULL) * 1000;
 			this.autodetect_server_timeout = 0;
 			break;
-		case 'j':
-			this.downstream_timeout_ms = strtod(optarg, NULL) * 1000;
-			if (this.autodetect_server_timeout) {
-				this.autodetect_server_timeout = 0;
-				this.server_timeout_ms = 4000;
-			}
-			break;
 		case 'J':
 			this.downstream_delay_variance = strtod(optarg, NULL);
 			if (0.0 == this.downstream_delay_variance) {
@@ -584,19 +584,17 @@ main(int argc, char **argv)
 				this.downstream_delay_variance = 2.0;
 			}
 			break;
-		case 'k':
-			if ((this.max_retries = strtol(optarg, NULL, 0)) < 0)
-				errx(7, "Invalid max retries, must be >= 0: %u", this.max_retries);
-			break;
 		case 's':
 			this.send_interval_ms = atoi(optarg);
 			if (this.send_interval_ms < 0)
 				this.send_interval_ms = 0;
 			break;
 		case 'Q':
-			// TODO: refactor for max queries option to do what it says
-			this.windowsize_down = atoi(optarg);
-			this.windowsize_up = this.windowsize_down;
+			this.max_queries = strtod(optarg, NULL);
+			this.windowsize_down = this.windowsize_up = this.max_queries;
+			break;
+		case 'q':
+			this.target_queries = strtod(optarg, NULL);
 			break;
 		case 'c':
 			this.compression_down = atoi(optarg) & 1;
@@ -614,7 +612,6 @@ main(int argc, char **argv)
 	}
 
 	srand((unsigned) time(NULL));
-	this.rand_seed = (uint16_t) rand();
 	this.lastid = (uint16_t) rand();
 	this.running = 1;
 
@@ -684,11 +681,14 @@ main(int argc, char **argv)
 		putname(&p, sizeof(this.topdomain), (uint8_t *) topdomain, strlen(topdomain), 0);
 	}
 
-	int max_ws = MAX_SEQ_ID / 2;
-	if (this.windowsize_up < 0 || this.windowsize_down < 1 ||
-		this.windowsize_up > max_ws || this.windowsize_down > max_ws) {
-		warnx("Window sizes (-w or -W) must be between 0 and %d!", max_ws);
+	if (this.max_queries == 0 || this.max_queries > MAX_SEND_FRAGS) {
+		warnx("Maximum in-flight queries (-Q) must be between 1 and %d", MAX_SEND_FRAGS);
 		usage();
+	}
+
+	if (this.target_queries > this.max_queries) {
+		fprintf(stderr, "Warning: Target number of pending queries (-q) can't be more than max pending queries (-Q)\n");
+		this.target_queries = this.max_queries;
 	}
 
 	if (this.max_timeout_ms < 100) {
@@ -699,11 +699,6 @@ main(int argc, char **argv)
 	if ((this.server_timeout_ms < 100 || this.server_timeout_ms >= this.max_timeout_ms)
 		&& !this.autodetect_server_timeout) {
 		warnx("Server timeout (-i) must be greater than 0.1 sec and less than target interval!");
-		usage();
-	}
-
-	if (this.downstream_timeout_ms < 100) {
-		warnx("Downstream fragment timeout must be more than 0.1 sec to prevent excessive retransmits.");
 		usage();
 	}
 

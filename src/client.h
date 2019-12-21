@@ -23,7 +23,6 @@
 extern int debug;
 extern int stats;
 
-#define PENDING_QUERIES_LENGTH (MAX(this.windowsize_up, this.windowsize_down) * 4)
 #define INSTANCE this
 
 /* Upstream encoding tests */
@@ -65,13 +64,13 @@ struct nameserv {
 
 struct client_instance {
 	uint8_t topdomain[128]; /* topdomain in DNS-encoded form */
-	uint8_t passwordmd5[16];
-	uint8_t hmac_key[16];
-	char **nameserv_hosts;
-	struct nameserv *nameserv_addrs;
+	uint8_t passwordmd5[16]; /* md5 hash of password */
+	uint8_t hmac_key[16]; /* calculated hmac key for the current session */
 	struct frag_buffer *outbuf; /* outgoing and incoming window buffers */
 	struct frag_buffer *inbuf;
+	struct qtrack_buffer qtrack; /* keep track of pending queries */
 	struct query_tuple *pending_queries;	/* query tracking data */
+
 	int autodetect_frag_size;
 	int hostname_maxlen;	/* maximum length of generated hostnames (incl. topdomain) */
 	int raw_mode;			/* enable raw UDP mode */
@@ -85,10 +84,15 @@ struct client_instance {
 
 	/* DNS nameserver info */
 	size_t nameserv_hosts_len;
+	char **nameserv_hosts;
 	size_t nameserv_addrs_count;
+	struct nameserv *nameserv_addrs;
 	int current_nameserver;
+
+	/* Raw connection details */
 	struct sockaddr_storage raw_serv;
 	socklen_t raw_serv_len;
+	enum connection conn;	/* connection mode (NULL/RAW) */
 
 	/* Remote UDP forwarding stuff (for -R) */
 	struct sockaddr_storage remote_forward_addr;
@@ -102,43 +106,42 @@ struct client_instance {
 	int rtable;
 #endif
 
-
-	uint16_t rand_seed; /* TODO remove this */
-
 	/* Current up/downstream window data */
-
-	size_t windowsize_up;
-	size_t windowsize_down;
+	size_t max_queries;			/* maximum number of in-flight queries */
+	size_t target_queries;			/* how many queries to keep pending at the server */
+	size_t windowsize_up;		/* [deprecated: use max_queries] */
+	size_t windowsize_down;		/* [deprecated: use max_queries] */
 	size_t maxfragsize_down;
 	size_t maxfragsize_up;
-	int next_downstream_ack; /* Next downstream seqID to be ACK'd (-1 if none pending) */
+	int next_downstream_ack;	/* Next downstream seqID to be ACK'd (-1 if none pending) [deprecated] */
 
 	/* Connection statistics and tracking */
-	size_t num_pending;				/* number of queries in pending_queries */
-	size_t num_immediate;
-	size_t num_timeouts;
-	size_t num_untracked;
-	size_t num_servfail;
-	size_t num_badauth;
-	size_t num_sent;
-	size_t num_recv;
+	size_t num_immediate;		/* number of queries which were replied to immediately */
+	size_t num_timeouts;		/* number of queries which have timed out [not implemented?] */
+	size_t num_untracked;		/* DNS responses which we didn't know about, probably old ones that got cleared from the cache */
+	size_t num_servfail;		/* number of responses with DNS SERVFAIL error */
+	size_t num_badauth;			/* number of times we received BADAUTH error from the server */
+	size_t num_sent;			/* total number of queries sent */
+	size_t num_recv;			/* total number of answers received */
 	size_t send_query_sendcnt;
 	size_t send_query_recvcnt;
-	size_t num_frags_sent;
-	size_t num_frags_recv;
-	size_t num_pings;
-	uint16_t lastid;		/* id of last sent query */
-	uint16_t do_qtype;		/* set query type to send */
-	uint32_t cmc_up;		/* CMC of next query */
-	uint32_t cmc_down;		/* highest CMC of downstream replies */
-	time_t max_timeout_ms;
-	time_t send_interval_ms;
-	time_t min_send_interval_ms;
-	time_t server_timeout_ms;	/* Server response timeout in ms and downstream window timeout */
-	time_t downstream_timeout_ms; /* deprecated */
-	double downstream_delay_variance; /* TODO: use delay variance for server_timeout */
-	time_t rtt_total_ms;	/* Cumulative Round-Trip-Time in ms */
+	size_t num_frags_sent;		/* number of data fragments sent */
+	size_t num_frags_recv;		/* number of data fragments received */
+	size_t num_pings;			/* number of ping queries sent */
+	uint16_t lastid;			/* id of last sent query */
+	uint16_t do_qtype;			/* set query type to send */
+	uint32_t cmc_up;			/* CMC of next query */
+	uint32_t cmc_down;			/* highest CMC of downstream replies */
 
+	/* Timing and timeouts */
+	// TODO: simplify timing calculations
+	time_t max_timeout_ms;			/* Max timeout for queries is max interval + 1 second extra [deprecated] */
+	time_t send_interval_ms;		/* how long to wait between sending queries [deprecated] */
+	time_t min_send_interval_ms;	/* strict minimum delay between sending queries */
+	time_t server_timeout_ms;		/* Server response timeout in ms and downstream window timeout */
+	time_t downstream_timeout_ms;	/* [deprecated] */
+	double downstream_delay_variance; /* TODO: use delay variance for server_timeout */
+	time_t rtt_total_ms;			/* average measured Round-Trip-Time in ms */
 
 	char userid;			/* My userid at the server */
 	char userid_char;		/* used when sending (lowercase) */
@@ -147,14 +150,8 @@ struct client_instance {
 	uint8_t enc_up;			/* encoder for upstream data */
 	int compression_up;		/* Upstream/downstream compression flags */
 	int compression_down;
-	unsigned max_retries;	/* number of times to resend fragments */
-	enum connection conn;	/* connection mode (NULL/RAW) */
+	unsigned max_retries;	/* number of times to resend fragments [deprecated] */
 	time_t lastdownstreamtime;	/* timestamp of last received packet from server */
-};
-
-struct query_tuple {
-	int id; /* DNS query / response ID */
-	struct timeval time; /* time sent or 0 if cleared */
 };
 
 extern struct client_instance this;
@@ -168,7 +165,14 @@ const char *client_get_raw_addr();
 void client_rotate_nameserver();
 void client_set_hostname_maxlen(size_t i);
 
+int update_server_timeout(int handshake);
+
+
 int client_handshake();
 int client_tunnel();
+
+void send_next_frag();
+int send_ping(int ping_response, int set_timeout);
+
 
 #endif
