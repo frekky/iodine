@@ -21,6 +21,9 @@
 time_t
 timeval_to_ms(struct timeval *tv)
 {
+	if (!tv)
+		return 0;
+
 	time_t ms = tv->tv_sec * 1000;
 	ms += (tv->tv_usec + 500) / 1000;
 	return ms;

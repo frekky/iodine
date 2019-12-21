@@ -23,6 +23,7 @@
 #define MAX_FRAGSIZE_DOWN 2048
 #define MAX_FRAGSIZE_UP	255
 #define MAX_SEQ_AHEAD (MAX_SEQ_ID / 2)
+#define MAX_SEND_FRAGS (MAX_SEQ_AHEAD / 2 - 1)
 
 /* Window function definitions. */
 #define WINDOW_SENDING 1

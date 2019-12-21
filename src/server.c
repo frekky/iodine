@@ -260,7 +260,7 @@ check_pending_queries(struct timeval *maxwait)
 {
 	for (int userid = 0; userid < created_users; userid++) {
 		struct tun_user *u = &users[userid];
-		if (!user_active(userid) || u->tuntype == USER_CONN_NONE)
+		if (!user_active(userid) || u->conn != CONN_RAW_UDP || u->tuntype == USER_CONN_NONE)
 			continue;
 
 		/* Check if there are any queries in the cache which have timed out. */
@@ -468,19 +468,17 @@ tunnel_dns(int dns_fd)
 int
 server_tunnel()
 {
-	struct timeval tv;
+	struct timeval wait_time;
 	fd_set read_fds, write_fds;
-	int i;
-	int userid;
 
 	while (server.running) {
 		int maxfd;
-		tv.tv_sec = 10;
-		tv.tv_usec = 0;
+		wait_time.tv_sec = 10;
+		wait_time.tv_usec = 0;
 
 		/* get max wait time based on pending queries */
-		check_pending_queries(&tv);
-		DEBUG(5, "server_tunnel: waiting %" L "d ms", timeval_to_ms(&tv));
+		check_pending_queries(&wait_time);
+		DEBUG(5, "server_tunnel: waiting %" L "d ms", timeval_to_ms(&wait_time));
 
 		FD_ZERO(&read_fds);
 		FD_ZERO(&write_fds);
@@ -510,7 +508,7 @@ server_tunnel()
 		/* add connected user TCP forward FDs to read set */
 		maxfd = MAX(set_user_udp_fds(&read_fds), maxfd);
 
-		i = select(maxfd + 1, &read_fds, &write_fds, NULL, &tv);
+		int i = select(maxfd + 1, &read_fds, &write_fds, NULL, &wait_time);
 
 		if(i < 0) { /* select error */
 			if (server.running)
@@ -522,7 +520,7 @@ server_tunnel()
 			if (server.max_idle_time) {
 				/* check if idle time expired */
 				time_t last_action = 0;
-				for (userid = 0; userid < created_users; userid++) {
+				for (int userid = 0; userid < created_users; userid++) {
 					last_action = (users[userid].last_pkt > last_action) ? users[userid].last_pkt : last_action;
 				}
 				double idle_time = difftime(time(NULL), last_action);
@@ -536,7 +534,7 @@ server_tunnel()
 				tunnel_tun();
 			}
 
-			for (userid = 0; userid < created_users; userid++) {
+			for (int userid = 0; userid < created_users; userid++) {
 				if (user_active(userid) && FD_ISSET(users[userid].remote_udp_fd, &read_fds)) {
 					tunnel_udp(userid);
 				}
@@ -582,7 +580,7 @@ handle_full_packet(int userid, uint8_t *data, size_t len, int compressed)
 		if (users[userid].remoteforward_addr_len == 0) {
 			hdr = (struct ip*) (out + 4);
 			touser = find_user_by_ip(hdr->ip_dst.s_addr);
-			DEBUG(2, "FULL PKT: %zu bytes from user %d (touser %d)", len, userid, touser);
+			DEBUG(2, "OUT on tun: %zu bytes from user %d (touser %d)", len, userid, touser);
 			if (touser == -1) {
 				/* send the uncompressed packet to tun device */
 				write_tun(server.tun_fd, rawdata, rawlen);
