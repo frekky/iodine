@@ -21,17 +21,17 @@
 #define DOT_CHAR		'.'
 #define INVALID_CHAR	'^'
 
-size_t readname(uint8_t *, size_t, uint8_t **, uint8_t *, size_t, int, int);
-size_t readshort(uint8_t *, uint8_t **, uint16_t *);
-size_t readlong(uint8_t *, uint8_t **, uint32_t *);
-size_t readdata(uint8_t **, uint8_t *, size_t);
-size_t readtxtbin(uint8_t *, uint8_t **, size_t, uint8_t *, size_t);
+size_t readname(const uint8_t *, size_t, const uint8_t **, uint8_t *, size_t, int, int);
+size_t readshort(const uint8_t *, const uint8_t **, uint16_t *);
+size_t readlong(const uint8_t *, const uint8_t **, uint32_t *);
+size_t readdata(const uint8_t **, uint8_t *, size_t);
+size_t readtxtbin(const uint8_t *, const uint8_t **, size_t, uint8_t *, size_t);
 
-size_t putname(uint8_t **, size_t, uint8_t *, size_t, int);
+size_t putname(uint8_t **, size_t, const uint8_t *, size_t, int);
 size_t putbyte(uint8_t **, uint8_t);
 size_t putshort(uint8_t **, uint16_t);
 size_t putlong(uint8_t **, uint32_t);
-size_t putdata(uint8_t **, uint8_t *, size_t);
-size_t puttxtbin(uint8_t **, size_t, uint8_t *, size_t);
+size_t putdata(uint8_t **, const uint8_t *, size_t);
+size_t puttxtbin(uint8_t **, size_t, const uint8_t *, size_t);
 
 #endif
