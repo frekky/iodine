@@ -130,7 +130,7 @@ check_superuser(void (*usage_fn)(void))
 
 #define MAX_DATA_LEN 256
 char *
-tohexstr(uint8_t *data, size_t datalen, size_t bufnum)
+tohexstr(const uint8_t *data, size_t datalen, size_t bufnum)
 /* nicely formats binary data as ASCII hex null-terminated string */
 {
 	static char bufarr[(MAX_DATA_LEN * 2 + 1) * 2];
@@ -149,7 +149,7 @@ tohexstr(uint8_t *data, size_t datalen, size_t bufnum)
 }
 
 char *
-format_host(uint8_t *host, size_t hostlen, size_t bufnum)
+format_host(const uint8_t *host, size_t hostlen, size_t bufnum)
 /* nicely formats DNS-encoded hostname with printable chars
  * returns null-terminated string */
 {

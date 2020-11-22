@@ -64,7 +64,7 @@
 #include "client.h"
 #include "hmac_md5.h"
 
-static int parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int*);
+static int parse_data(const uint8_t *data, size_t len, fragment *f, int *immediate, int*);
 static int handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int timeout);
 static int handshake_switch_options();
 
@@ -617,9 +617,9 @@ handshake_waitdns(uint8_t *buf, size_t *buflen, size_t signedlen, char cmd, int 
 }
 
 static int
-parse_data(uint8_t *data, size_t len, fragment *f, int *immediate, int *ping)
+parse_data(const uint8_t *data, size_t len, fragment *f, int *immediate, int *ping)
 {
-	uint8_t *p = data;
+	const uint8_t *p = data;
 
 	if (len < DOWNSTREAM_DATA_HDR) {
 		return 0;
@@ -1162,9 +1162,11 @@ send_server_options(uint8_t *flags)
 
 static int
 handshake_version(uint8_t *sc)
-/* takes server challenge (16 bytes) as argument */
+/* sc: 16-byte buffer to contain server challenge */
 {
-	uint8_t hex[] = "0123456789abcdef", in[100], raw[100], *p;
+	const uint8_t hex[] = "0123456789abcdef";
+	uint8_t in[100], raw[100];
+	const uint8_t *p;
 	uint32_t payload;
 	size_t len;
 	int ret;
@@ -1281,7 +1283,7 @@ handshake_raw_udp()
 	memset(&this.raw_serv, 0, sizeof(this.raw_serv));
 	got_addr = 0;
 
-	fprintf(stderr, "Testing raw UDP data to the server (skip with -r)");
+	fprintf(stderr, "Testing raw UDP data to the server (skip with -r0)");
 	for (int i = 0; this.running && i < 3; i++) {
 		send_ip_request(); /* get server IP address */
 		fprintf(stderr, ".");
@@ -1398,7 +1400,7 @@ codectest_validate(uint8_t *test, size_t testlen, uint8_t *datar, size_t datarle
 }
 
 static int
-handshake_codectest(uint8_t *s, size_t slen, int dn, int tries, size_t testlen)
+handshake_codectest(const uint8_t *s, size_t slen, int dn, int tries, size_t testlen)
 /* NOTE: *s must start with "aA" for case-swap check.
    dn==1 for downstream check, 0 for upstream check
    testlen is length of hostname (dn==0) or reply RDATA (dn==1) to fill
@@ -1441,7 +1443,7 @@ handshake_codectest(uint8_t *s, size_t slen, int dn, int tries, size_t testlen)
 			continue;
 		}
 		
-		uint8_t *p = in;
+		const uint8_t *p = in;
 		flags = *p++;
 		ulr = *p++;
 		readshort(in, &p, &drlen);
@@ -1637,7 +1639,8 @@ handshake_switch_options()
 		send_server_options(flags);
 
 		len = sizeof(in);
-		uint8_t *p = in, inflags[2];
+		const uint8_t *p = in;
+		uint8_t inflags[2];
 		uint16_t dnfragsize;
 		if ((ret = handshake_waitdns(in, &len, 0, 'O', i + 1)) != 1) {
 			DEBUG(2, "\ngot options reply, ret=%d, len=%zu, dderr=%d", ret, len, downstream_decode_err);
@@ -1813,21 +1816,13 @@ handshake_set_timeout()
 }
 
 int
-client_handshake()
+client_handshake(int auto_qtype, int auto_edns0, int auto_fragsize, int auto_raw_mode)
 /* returns 1 on success, 0 on error */
 {
 	uint8_t server_chall[16];
-	int autoqtype = 0, r;
+	int r;
 
-	/* qtype message printed in handshake function */
-	if (this.do_qtype == T_UNSET) {
-		autoqtype = 1;
-		this.do_qtype = T_A; /* use A queries for login process */
-	}
-
-	fprintf(stderr, "Using DNS type %s queries%s\n", get_qtype_name(this.do_qtype),
-			autoqtype ? " for login" : "");
-
+	fprintf(stderr, "Using DNS type %s queries for login\n", get_qtype_name(this.do_qtype));
 	this.cmc_up = rand();
 
 	if (!handshake_version(server_chall)) {
@@ -1839,7 +1834,7 @@ client_handshake()
 	}
 
 	/* now that we are authenticated, try to find best possible settings */
-	if (this.raw_mode) {
+	if (auto_raw_mode || (!auto_raw_mode && this.conn == CONN_RAW_UDP)) {
 		if (handshake_raw_udp()) { /* test sending UDP packets */
 			this.conn = CONN_RAW_UDP;
 			this.max_timeout_ms = 10000;
@@ -1848,17 +1843,20 @@ client_handshake()
 			fprintf(stderr, "Sending raw UDP traffic directly to %s\n",
 					format_addr(&this.raw_serv, this.raw_serv_len));
 			return 0;
+		} else if (!auto_raw_mode && this.conn == CONN_RAW_UDP) {
+			fprintf(stderr, "Failed to send raw UDP data, exiting (run without -r1 to continue)\n");
+			return 1;
 		}
 	} else {
 		fprintf(stderr, "Skipping raw mode check\n");
 	}
 
 	/* using CONN_DNS_NULL */
-	if (!handshake_edns0_check()) {
+	if (auto_edns0 && !handshake_edns0_check()) {
 		return 0;
 	}
 
-	if (!handshake_qtype_autodetect()) {
+	if (auto_qtype && !handshake_qtype_autodetect()) {
 		return 0;
 	}
 
@@ -1874,11 +1872,8 @@ client_handshake()
 			return 0;
 	}
 
-	if (this.autodetect_frag_size) {
-		this.maxfragsize_down = handshake_autoprobe_fragsize();
-		if (!this.maxfragsize_down) {
-			return 1;
-		}
+	if (auto_fragsize && !(this.maxfragsize_down = handshake_autoprobe_fragsize())) {
+		return 0;
 	}
 
 	/* Set server-side options (up/down codec, compression, fraglen) and request desired connection. */

@@ -87,17 +87,16 @@ struct client_instance this;
 	.autodetect_delay_variance = 0, \
 	.enc_down = C_UNSET, \
 	.enc_up = C_UNSET, \
+	.do_qtype = T_CNAME, \
 	.remote_forward_addr = {.ss_family = AF_UNSPEC}
 
 static struct client_instance preset_default = {
-	.raw_mode = 1,
 	.lazymode = 1,
 	.max_timeout_ms = 5000,
 	.send_interval_ms = 0,
 	.server_timeout_ms = 4000,
 	.downstream_timeout_ms = 2000,
 	.autodetect_server_timeout = 1,
-	.autodetect_frag_size = 1,
 	.maxfragsize_down = MAX_FRAGSIZE_DOWN,
 	.compression_up = 1,
 	.compression_down = 1,
@@ -106,12 +105,10 @@ static struct client_instance preset_default = {
 	.windowsize_up = 8,
 	.windowsize_down = 8,
 	.hostname_maxlen = 0xFF,
-	.do_qtype = T_UNSET,
 	PRESET_STATIC_VALUES
 };
 
 static struct client_instance preset_original = {
-	.raw_mode = 0,
 	.lazymode = 1,
 	.max_timeout_ms = 4000,
 	.send_interval_ms = 0,
@@ -123,23 +120,19 @@ static struct client_instance preset_original = {
 	.windowsize_up = 1,
 	.hostname_maxlen = 0xFF,
 	.downstream_timeout_ms = 4000,
-	.autodetect_frag_size = 1,
 	.maxfragsize_down = MAX_FRAGSIZE_DOWN,
 	.compression_down = 1,
 	.compression_up = 0,
-	.do_qtype = T_UNSET,
 	PRESET_STATIC_VALUES
 };
 
 static struct client_instance preset_fast = {
-	.raw_mode = 0,
 	.lazymode = 1,
 	.max_timeout_ms = 3000,
 	.send_interval_ms = 0,
 	.server_timeout_ms = 2500,
 	.downstream_timeout_ms = 100,
 	.autodetect_server_timeout = 1,
-	.autodetect_frag_size = 1,
 	.maxfragsize_down = 1176,
 	.compression_up = 1,
 	.compression_down = 1,
@@ -148,19 +141,16 @@ static struct client_instance preset_fast = {
 	.windowsize_up = 16,
 	.windowsize_down = 16,
 	.hostname_maxlen = 0xFF,
-	.do_qtype = T_UNSET,
 	PRESET_STATIC_VALUES
 };
 
 static struct client_instance preset_fallback = {
-	.raw_mode = 1,
 	.lazymode = 1,
 	.max_timeout_ms = 1000,
 	.send_interval_ms = 20,
 	.server_timeout_ms = 500,
 	.downstream_timeout_ms = 1000,
 	.autodetect_server_timeout = 1,
-	.autodetect_frag_size = 1,
 	.maxfragsize_down = 500,
 	.compression_up = 1,
 	.compression_down = 1,
@@ -169,7 +159,6 @@ static struct client_instance preset_fallback = {
 	.windowsize_up = 1,
 	.windowsize_down = 1,
 	.hostname_maxlen = 100,
-	.do_qtype = T_CNAME,
 	PRESET_STATIC_VALUES
 };
 
@@ -221,9 +210,9 @@ print_usage()
 {
 	extern char *__progname;
 
-	fprintf(stderr, "Usage: %s [-v] [-h] [-Y preset] [-V sec] [-X port] [-f] [-r] [-u user] [-t chrootdir] [-d device] "
+	fprintf(stderr, "Usage: %s [-46fhrtvD] [-Y preset] [-V sec] [-u user] [--chroot dir] [-d device] "
 			"[-Q numqueries] [-i sec] [-I sec] [-J var] [-c 0|1] [-C 0|1] [-s ms] "
-			"[-P password] [-m maxfragsize] [-M maxlen] [-T type] [-O enc] [-L 0|1] [-R port[,host] ] "
+			"[-P password] [-m maxfragsize] [-M maxlen] [-T type] [-E 0|1] [-O enc] [-L 0|1] [-R port[,host] ] "
 			"[-z context] [-F pidfile] topdomain [nameserver1 [nameserver2 [...]]]\n", __progname);
 }
 
@@ -251,11 +240,13 @@ help()
 	fprintf(stderr, "iodine IP over DNS tunneling client\n");
 	print_usage();
 	fprintf(stderr, "\nOptions to try if connection doesn't work:\n");
-	fprintf(stderr, "  -T  use DNS type: NULL, PRIVATE, TXT, SRV, MX,\n");
-	fprintf(stderr, "        DNAME, PTR, CNAME, A, AAAA, A6 (default: autodetect)\n");
+	fprintf(stderr, "  -T  set DNS type for login: NULL, PRIVATE, TXT, SRV, MX,\n");
+	fprintf(stderr, "        DNAME, PTR, CNAME, A, AAAA, A6 (default: A)\n");
+	fprintf(stderr, "  -t  disable autodetect DNS type after login (default: autodetect best)\n");
 	fprintf(stderr, "  -N  use specific upstream encoding for queries: Base32, Base64, Base64u,\n");
 	fprintf(stderr, "        Base128 or Raw  (default: Base32 for login, then autodetect)\n");
 	fprintf(stderr, "  -O  use specific downstream encoding for queries: same as -N\n");
+	fprintf(stderr, "  -E  set EDNS0 on/off (default: autodetect)\n");
 	fprintf(stderr, "  -I  target interval between sending and receiving requests (default: 4 secs)\n");
 	fprintf(stderr, "        or ping interval in immediate mode (default: 1 sec)\n");
 	fprintf(stderr, "  -s  minimum interval between queries (default: 0ms)\n");
@@ -299,6 +290,26 @@ help()
 	fprintf(stderr, "topdomain is the FQDN that is delegated to the tunnel endpoint.\n");
 
 	exit(0);
+}
+
+/* print a command line complete with connection parameters */
+static void
+print_cmdline()
+{
+	if (this.conn == CONN_DNS_NULL) {
+		fprintf(stderr, "To skip DNS parameter autodetection next time, use these options:\n"
+			"   -r0 -t -T%s -E%d -N%s -O%s -L%d -m%zu -M%d -i%0.3lf -I%0.3lf\n",
+			get_qtype_name(this.do_qtype),
+			this.use_edns0,
+			get_encoder(this.enc_down)->name,
+			get_encoder(this.enc_up)->name,
+			this.lazymode,
+			this.maxfragsize_down,
+			this.hostname_maxlen,
+			((double) this.server_timeout_ms) / 1000.0,
+			((double) this.max_timeout_ms) / 1000.0
+		);
+	}
 }
 
 static void
@@ -388,6 +399,10 @@ main(int argc, char **argv)
 
 	int remote_forward_port = 0;
 	int foreground = 0;
+	int autodetect_edns0 = 1;
+	int autodetect_qtype = 1;
+	int autodetect_dnfragsize = 1;
+	int autodetect_raw_mode = 1;
 
 	char *nameserv_host = NULL;
 	struct sockaddr_storage nameservaddr;
@@ -408,6 +423,7 @@ main(int argc, char **argv)
 
 #define OPT_RDOMAIN 0x80
 #define OPT_NODROP 0x81
+#define OPT_CHROOT 0x82
 
 	/* each option has format:
 	 * char *name, int has_arg, int *flag, int val */
@@ -417,7 +433,7 @@ main(int argc, char **argv)
 		{"stats", optional_argument, 0, 'V'},
 		{"context", required_argument, 0, 'z'},
 		{"rdomain", required_argument, 0, OPT_RDOMAIN},
-		{"chrootdir", required_argument, 0, 't'},
+		{"chrootdir", required_argument, 0, OPT_CHROOT},
 		{"preset", required_argument, 0, 'Y'},
 		{"proxycommand", no_argument, 0, 'R'},
 		{"remote", required_argument, 0, 'R'},
@@ -428,7 +444,7 @@ main(int argc, char **argv)
 	 * This is so that all options override preset values regardless of order in command line */
 	int optind_orig = optind, preset_id = -1;
 
-	static char *iodine_args_short = "46vfDhrY:s:V:c:C:i:J:u:t:d:R:P:Q:q:m:M:F:T:N:O:L:I:";
+	static char *iodine_args_short = "46vfDthY:s:V:c:C:i:J:u:d:r:R:P:Q:q:m:M:F:T:E:N:O:L:I:";
 
 	while ((choice = getopt_long(argc, argv, iodine_args_short, iodine_args, NULL))) {
 		/* Check if preset has been found yet so we don't process any other options */
@@ -501,12 +517,14 @@ main(int argc, char **argv)
 			/* NOTREACHED */
 			break;
 		case 'r':
-			this.raw_mode = 0;
+			if (atoi(optarg))
+				this.conn = CONN_RAW_UDP;
+			autodetect_raw_mode = 0;
 			break;
 		case 'u':
 			username = optarg;
 			break;
-		case 't':
+		case OPT_CHROOT:
 			newroot = optarg;
 			break;
 		case 'd':
@@ -532,7 +550,7 @@ main(int argc, char **argv)
 			memset(optarg, 0, strlen(optarg));
 			break;
 		case 'm':
-			this.autodetect_frag_size = 0;
+			autodetect_dnfragsize = 0;
 			this.maxfragsize_down = atoi(optarg);
 			break;
 		case 'M':
@@ -541,6 +559,7 @@ main(int argc, char **argv)
 				this.hostname_maxlen = 255;
 			if (this.hostname_maxlen < 10)
 				this.hostname_maxlen = 10;
+			client_set_hostname_maxlen(this.hostname_maxlen); // XXX this is a hack to sort of set maxfragsize_up properly
 			break;
 		case 'z':
 			context = optarg;
@@ -551,6 +570,13 @@ main(int argc, char **argv)
 		case 'T':
 			if ((this.do_qtype = get_qtype_from_name(optarg)) == T_UNSET)
 				errx(5, "Invalid query type '%s'", optarg);
+			break;
+		case 't':
+			autodetect_qtype = 0;
+			break;
+		case 'E':
+			autodetect_edns0 = 0;
+			this.use_edns0 = !!atoi(optarg);
 			break;
 		case 'N':
 			if ((this.enc_up = get_codec_from_name(optarg)) == C_UNSET)
@@ -772,12 +798,13 @@ main(int argc, char **argv)
 		fprintf(stderr, "Requesting data forwarding from server to udp://%s:%d\n",
 				format_addr(&this.remote_forward_addr, this.remote_forward_addr_len), remote_forward_port);
 
-	if (!client_handshake()) {
+	if (!client_handshake(autodetect_qtype, autodetect_edns0, autodetect_dnfragsize, autodetect_raw_mode)) {
 		retval = 1;
 		goto cleanup;
 	}
 
 	fprintf(stderr, "Connection setup complete, transmitting data.\n");
+	print_cmdline();
 
 	if (foreground == 0)
 		do_detach();

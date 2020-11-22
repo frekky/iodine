@@ -71,9 +71,7 @@ struct client_instance {
 	struct qtrack_buffer qtrack; /* keep track of pending queries */
 	struct query_tuple *pending_queries;	/* query tracking data */
 
-	int autodetect_frag_size;
 	int hostname_maxlen;	/* maximum length of generated hostnames (incl. topdomain) */
-	int raw_mode;			/* enable raw UDP mode */
 	int use_edns0;			/* use EDNS0 extension for longer DNS packets */
 	int autodetect_server_timeout;
 	int autodetect_delay_variance;
@@ -168,7 +166,7 @@ void client_set_hostname_maxlen(size_t i);
 int update_server_timeout(int handshake);
 
 
-int client_handshake();
+int client_handshake(int auto_qtype, int auto_edns0, int auto_fragsize, int auto_raw_mode);
 int client_tunnel();
 
 void send_next_frag();

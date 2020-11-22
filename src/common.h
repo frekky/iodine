@@ -221,8 +221,8 @@ enum connection {
 extern int debug;		/* enable debug level */
 
 void check_superuser(void (*usage_fn)(void));
-char *tohexstr(uint8_t *data, size_t datalen, size_t bufnum);
-char *format_host(uint8_t *host, size_t hostlen, size_t bufnum);
+char *tohexstr(const uint8_t *data, size_t datalen, size_t bufnum);
+char *format_host(const uint8_t *host, size_t hostlen, size_t bufnum);
 char *format_addr(struct sockaddr_storage *sockaddr, int sockaddr_len);
 int get_addr(char *, int, int, int, struct sockaddr_storage *);
 int open_dns(struct sockaddr_storage *, size_t);
