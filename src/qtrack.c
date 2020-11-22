@@ -38,7 +38,7 @@ int
 qtrack_init(struct qtrack_buffer *qtrack, size_t max_queries)
 /* setup the pending query tracker */
 {
-	qtrack->size = max_queries + 1;
+	qtrack->size = max_queries * 2 + 1;
 	DEBUG(5, "init qtrack: max_queries=%zu, size=%zu", max_queries, qtrack->size);
 
 	/* init query tracking */
@@ -76,7 +76,7 @@ check_pending_queries(struct qtrack_buffer *qtrack, struct timeval *timeout, str
 		IF_DEBUG(6, {
 			struct timeval age;
 			timersub(&now, &q->time_sent, &age);
-			DEBUG(6, "query pending[%zu]: id=%hhu, age=%ldms", i, q->id, timeval_to_ms(&age));
+			DEBUG(6, "query pending[%zu]: id=%d, age=%ldms", i, q->id, timeval_to_ms(&age));
 		});
 
 		if (q->id < 0) /* this record is empty */

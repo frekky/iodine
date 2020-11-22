@@ -260,28 +260,42 @@ check_pending_queries(struct timeval *maxwait)
 {
 	for (int userid = 0; userid < created_users; userid++) {
 		struct tun_user *u = &users[userid];
-		if (!user_active(userid) || u->conn != CONN_RAW_UDP || u->tuntype == USER_CONN_NONE)
+		if (!user_active(userid) || u->conn == CONN_RAW_UDP || u->tuntype == USER_CONN_NONE)
 			continue;
 
-		/* Check if there are any queries in the cache which have timed out. */
-		/* If not, check if the user has any pending fragments and send them
-		 * as replies to queries from the cache. */
+		/* Reply to pending queries when:
+		 * a) the query has timed out
+		 * b) there are more pending queries than needed
+		 * c) there are data fragments to send */
 		size_t num_send = window_to_send(u->outgoing, NULL);
-		DEBUG(5, "user %d has %zu pending queries, %zu pending frags", userid, num_send, u->qmem->num_pending);
+		size_t num_excess = 0;
+		size_t num_reply = 0;
 
-		while (u->qmem->num_pending != 0 || num_send != 0) {
+		if (u->qmem->num_pending != 0) {
+			if (u->qmem->num_pending > u->max_queries) {
+				num_excess = u->qmem->num_pending - u->max_queries;
+				num_reply = num_excess;
+			} else if (num_send > 0) {
+				num_reply = MAX(num_send, u->qmem->num_pending);
+			}
+		}
+		DEBUG(5, "user %d has %zu pending queries (max=%d, excess=%zu), %zu pending frags: replying to %zu now",
+				userid, u->qmem->num_pending, u->max_queries, num_excess, num_send, num_reply);
+
+		while (u->qmem->num_pending != 0 || num_reply != 0) {
 			struct dns_packet *tosend;
 			int run_again = qmem_max_wait(u->qmem, &tosend, maxwait);
 
-			if (!run_again && num_send == 0) {
-				DEBUG(7, "no more queries timed out, no more frags to send");
+			if (!run_again && num_reply == 0) {
+				DEBUG(7, "no more queries timed out, no more replies to send");
 				if (tosend) {
+					/* tosend isn't being used here, clean up */
 					dns_packet_destroy(tosend);
 				}
 				break;
 			} else if (!tosend) {
-				DEBUG(3, "should have more queries for user %d (want to send %zu frags, num_pending=%zu)",
-						userid, num_send, u->qmem->num_pending);
+				DEBUG(3, "should have more queries for user %d (want to reply to %zu queries, num_pending=%zu)",
+						userid, num_reply, u->qmem->num_pending);
 				break;
 			}
 
@@ -294,6 +308,8 @@ check_pending_queries(struct timeval *maxwait)
 
 			dns_packet_destroy(ans);
 			dns_packet_destroy(tosend);
+			if (num_reply != 0)
+				num_reply--;
 		};
 	}
 }
@@ -915,8 +931,8 @@ handle_dns_ip_request(struct dns_packet *q, int userid)
 {
 	uint8_t reply[17];
 	int length;
-	reply[0] = 'I';
 	if (q->m.from.ss_family == AF_INET) {
+		reply[0] = 4; // IPv4 = 4 bytes length
 		if (server.ns_ip != INADDR_ANY) {
 			/* If set, use assigned external ip (-n option) */
 			memcpy(reply + 1, &server.ns_ip, sizeof(server.ns_ip));
@@ -927,6 +943,7 @@ handle_dns_ip_request(struct dns_packet *q, int userid)
 		}
 		length = 1 + sizeof(struct in_addr);
 	} else {
+		reply[0] = 16;
 		struct sockaddr_in6 *addr = (struct sockaddr_in6 *) &q->m.dest;
 		memcpy(reply + 1, &addr->sin6_addr, sizeof(struct in6_addr));
 		length = 1 + sizeof(struct in6_addr);
@@ -1183,7 +1200,7 @@ handle_dns_data(struct dns_packet *q, int userid, uint8_t *unpacked, size_t len)
 }
 
 static struct dns_packet *
-handle_dns_login(struct dns_packet *q, uint8_t *unpacked,
+handle_dns_login(struct dns_packet *q, const uint8_t *unpacked,
 		size_t len, int userid, uint32_t cmc)
 {
 	uint8_t logindata[16], cc[16], out[16];
@@ -1256,7 +1273,7 @@ handle_null_request(struct dns_packet *q, uint8_t *encdata, size_t encdatalen)
 
 	/* get the cmd and change to uppercase for HMAC calculation */
 	cmd = encdata[0] = toupper(encdata[0]);
-	DEBUG(3, "NULL request encdatalen %zu, cmd '%c'", encdatalen, cmd);
+	DEBUG(3, "DNS T=%s request encdatalen %zu, cmd '%c'", get_qtype_name(q->q[0].type), encdatalen, cmd);
 
 	/* Pre-login commands: backwards compatible with protocol 00000402 */
 	if (cmd == 'V') { /* Version check - before userid is assigned */

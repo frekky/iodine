@@ -130,6 +130,8 @@ users_get_first_ip()
 
 int
 find_user_by_ip(uint32_t ip)
+// TODO: option to disable user-to-user packets being routed within iodine server
+// (or just remove it and leave it to the OS entirely)
 {
 	for (int i = 0; i < usercount; i++) {
 		if (user_active(i) && users[i].authenticated && users[i].tuntype == USER_CONN_TUNIP

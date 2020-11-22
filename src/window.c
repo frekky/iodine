@@ -359,6 +359,7 @@ window_mark_sent(struct frag_buffer *w, fragment *justsent)
 		WDEBUG(1, "Warning: bad fragoffs=%zd != window_start=%zu", fragoffs, w->window_start);
 		return;
 	}
+	WDEBUG(4, "have sent frags[%zu]: len=%zu", fragoffs, w->frags[fragoffs].len);
 
 	window_slide(w, 1);
 }
@@ -374,6 +375,7 @@ window_to_send(struct frag_buffer *w, fragment **nextsend)
 
 	/* next fragment is at the start of the buffer */
 	fragment *f = &w->frags[w->window_start];
+	WDEBUG(4, "sending frags[%zu] next: len=%zu", w->window_start, f->len);
 
 	if (f->len == 0) {
 		/* this is bad, probably indicates misuse of window_mark_sent() somewhere... */

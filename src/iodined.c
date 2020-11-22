@@ -158,6 +158,7 @@ get_external_ip(struct in_addr *ip)
 	if (len < 10) return 7;
 	b += 4;
 
+	DEBUG(1, "Got public IP address from api.ipify.org: %s", b);
 	res = inet_aton(b, ip);
 	return (res == 0);
 }
@@ -313,7 +314,7 @@ main(int argc, char **argv)
 		{"context", required_argument, 0, 'z'},
 		{"chrootdir", required_argument, 0, 't'},
 		{"pidfile", required_argument, 0, 'F'},
-		{NULL, 0, 0, 0}
+		{NULL, 0, 0, 0} // end of arguments list
 	};
 
 	static char *iodined_args_short = "46vcsfhDARu:t:d:m:l:L:p:n:b:P:z:F:i:";
