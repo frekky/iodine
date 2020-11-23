@@ -240,6 +240,7 @@ help()
 	fprintf(stderr, "iodine IP over DNS tunneling client\n");
 	print_usage();
 	fprintf(stderr, "\nOptions to try if connection doesn't work:\n");
+	fprintf(stderr, "    (when iodine is connected, see the output for detected options)\n");
 	fprintf(stderr, "  -T  set DNS type for login: NULL, PRIVATE, TXT, SRV, MX,\n");
 	fprintf(stderr, "        DNAME, PTR, CNAME, A, AAAA, A6 (default: A)\n");
 	fprintf(stderr, "  -t  disable autodetect DNS type after login (default: autodetect best)\n");
@@ -396,6 +397,7 @@ main(int argc, char **argv)
 	char *device = NULL;
 	char *pidfile = NULL;
 	char *password = NULL;
+	char *csv_stats_file = NULL;
 
 	int remote_forward_port = 0;
 	int foreground = 0;
@@ -422,8 +424,8 @@ main(int argc, char **argv)
 #endif
 
 #define OPT_RDOMAIN 0x80
-#define OPT_NODROP 0x81
-#define OPT_CHROOT 0x82
+#define OPT_CHROOT 0x81
+#define OPT_CSV_STATS 0x82
 
 	/* each option has format:
 	 * char *name, int has_arg, int *flag, int val */
@@ -435,8 +437,8 @@ main(int argc, char **argv)
 		{"rdomain", required_argument, 0, OPT_RDOMAIN},
 		{"chrootdir", required_argument, 0, OPT_CHROOT},
 		{"preset", required_argument, 0, 'Y'},
-		{"proxycommand", no_argument, 0, 'R'},
 		{"remote", required_argument, 0, 'R'},
+		{"csvstats", required_argument, 0, OPT_CSV_STATS},
 		{NULL, 0, 0, 0}
 	};
 
@@ -587,11 +589,7 @@ main(int argc, char **argv)
 				errx(6, "Invalid encoding type '%s'", optarg);
 			break;
 		case 'L':
-			this.lazymode = atoi(optarg);
-			if (this.lazymode > 1)
-				this.lazymode = 1;
-			if (this.lazymode < 0)
-				this.lazymode = 0;
+			this.lazymode = !!atoi(optarg);
 			break;
 		case 'I':
 			this.max_timeout_ms = strtod(optarg, NULL) * 1000;
@@ -623,14 +621,17 @@ main(int argc, char **argv)
 			this.target_queries = strtod(optarg, NULL);
 			break;
 		case 'c':
-			this.compression_down = atoi(optarg) & 1;
+			this.compression_down = !!atoi(optarg);
 			break;
 		case 'C':
-			this.compression_up = atoi(optarg) & 1;
+			this.compression_up = !!atoi(optarg);
 			break;
 		case 'Y':
 			/* Already processed preset: ignore */
 			continue;
+		case OPT_CSV_STATS:
+			csv_stats_file = optarg;
+			break;
 		default:
 			usage();
 			/* NOTREACHED */
@@ -829,6 +830,13 @@ main(int argc, char **argv)
 
 	if (context != NULL)
 		do_setcon(context);
+
+	if (csv_stats_file != NULL) {
+		this.csv_stats_fd = stats_open_csv(csv_stats_file, 0);
+		if (!this.csv_stats_fd) {
+			usage();
+		}
+	}
 
 	client_tunnel();
 
